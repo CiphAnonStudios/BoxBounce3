@@ -1,0 +1,4325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Box Bounce</title>
+
+<style>
+*{
+    box-sizing:border-box;
+    margin:0;
+    padding:0;
+    user-select:none;
+    -webkit-user-select:none;
+    touch-action:none;
+}
+
+html,body{
+    width:100%;
+    height:100%;
+    overflow:hidden;
+    background:#151a20;
+}
+
+canvas{
+    display:block;
+    width:100%;
+    height:100%;
+}
+
+.mobile{
+    position:fixed;
+    display:none;
+    z-index:10;
+    width:68px;
+    height:68px;
+    border:2px solid rgba(255,255,255,.25);
+    border-radius:15px;
+    background:rgba(20,25,31,.85);
+    color:#fff;
+    font:bold 28px Arial;
+    align-items:center;
+    justify-content:center;
+}
+
+#left{
+    left:15px;
+    bottom:15px;
+}
+
+#right{
+    left:95px;
+    bottom:15px;
+}
+
+#jump{
+    right:15px;
+    bottom:15px;
+}
+
+@media(max-width:800px){
+    .mobile{
+        display:flex;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="left" class="mobile">◀</div>
+<div id="right" class="mobile">▶</div>
+<div id="jump" class="mobile">▲</div>
+
+<script>
+
+/* =========================================================
+   BOX BOUNCE
+   GRID VERSION
+   ========================================================= */
+
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+
+let W=innerWidth;
+let H=innerHeight;
+let DPR=1;
+
+function resize(){
+
+    W=innerWidth;
+    H=innerHeight;
+
+    DPR=Math.min(devicePixelRatio||1,2);
+
+    canvas.width=W*DPR;
+    canvas.height=H*DPR;
+
+    canvas.style.width=W+"px";
+    canvas.style.height=H+"px";
+
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+
+    buildGrid();
+}
+
+addEventListener("resize",resize);
+
+
+/* =========================================================
+   GRID SETTINGS
+   ========================================================= */
+
+const GRID_SIZE=50;
+
+const GROUND_HEIGHT=105;
+
+/*
+    How many rows can exist above
+    the ground.
+
+    This is the actual height limit.
+*/
+const MAX_ROWS=7;
+
+
+/* =========================================================
+   WORLD
+   ========================================================= */
+
+let GRID_X=0;
+let GRID_COLS=0;
+let GRID_ROWS=MAX_ROWS;
+
+let groundY=0;
+
+function buildGrid(){
+
+    groundY=H-GROUND_HEIGHT;
+
+    /*
+        Center the grid.
+    */
+
+    GRID_COLS=
+        Math.max(
+            3,
+            Math.floor(
+                W/GRID_SIZE
+            )
+        );
+
+    GRID_X=
+        (W-
+        GRID_COLS*
+        GRID_SIZE)/2;
+}
+
+function cellX(col){
+
+    return GRID_X+
+        col*
+        GRID_SIZE;
+}
+
+function cellY(row){
+
+    /*
+        row 0 = ground level
+        row 1 = first box
+        etc.
+    */
+
+    return groundY-
+        GRID_SIZE-
+        row*
+        GRID_SIZE;
+}
+
+
+/* =========================================================
+   STATE
+   ========================================================= */
+
+let state="menu";
+
+let score=0;
+
+let best=
+    Number(
+        localStorage.getItem(
+            "boxBounceBest"
+        )||0
+    );
+
+let gameTime=0;
+
+let spawnTimer=1.5;
+
+let carTimer=6;
+
+let shake=0;
+
+
+/* =========================================================
+   ARRAYS
+   ========================================================= */
+
+let boxes=[];
+
+let warnings=[];
+
+let items=[];
+
+let boards=[];
+
+let cars=[];
+
+let particles=[];
+
+let floatingTexts=[];
+
+
+/* =========================================================
+   PLAYER
+   ========================================================= */
+
+const PLAYER_SIZE=38;
+
+const player={
+
+    x:0,
+
+    y:0,
+
+    w:PLAYER_SIZE,
+
+    h:PLAYER_SIZE,
+
+    vx:0,
+
+    vy:0,
+
+    grounded:false,
+
+    gridCol:-1,
+
+    item:null,
+
+    shieldTime:0,
+
+    dead:false
+};
+
+
+/* =========================================================
+   PHYSICS
+   ========================================================= */
+
+const GRAVITY=.65;
+
+const MOVE_SPEED=5.5;
+
+const JUMP_POWER=12.5;
+
+
+/* =========================================================
+   INPUT
+   ========================================================= */
+
+const keys={};
+
+let leftPressed=false;
+let rightPressed=false;
+
+addEventListener("keydown",e=>{
+
+    const key=e.key.toLowerCase();
+
+    keys[key]=true;
+
+    if(
+        key==="arrowleft" ||
+        key==="arrowright" ||
+        key==="arrowup" ||
+        key===" "
+    ){
+        e.preventDefault();
+    }
+
+    if(
+        key===" " ||
+        key==="w" ||
+        key==="arrowup"
+    ){
+        jump();
+    }
+
+    if(key==="e"){
+        useItem();
+    }
+
+    if(key==="p"){
+
+        if(state==="game")
+            state="pause";
+
+        else if(state==="pause")
+            state="game";
+    }
+
+    if(
+        key==="r" &&
+        state==="gameover"
+    ){
+        startGame();
+    }
+});
+
+addEventListener("keyup",e=>{
+
+    keys[
+        e.key.toLowerCase()
+    ]=false;
+});
+
+
+/* =========================================================
+   MOBILE BUTTONS
+   ========================================================= */
+
+function holdButton(element,down,up){
+
+    element.addEventListener(
+        "pointerdown",
+        e=>{
+            e.preventDefault();
+            down();
+        }
+    );
+
+    element.addEventListener(
+        "pointerup",
+        e=>{
+            e.preventDefault();
+            up();
+        }
+    );
+
+    element.addEventListener(
+        "pointercancel",
+        up
+    );
+
+    element.addEventListener(
+        "pointerleave",
+        up
+    );
+}
+
+holdButton(
+    document.getElementById("left"),
+    ()=>leftPressed=true,
+    ()=>leftPressed=false
+);
+
+holdButton(
+    document.getElementById("right"),
+    ()=>rightPressed=true,
+    ()=>rightPressed=false
+);
+
+document
+.getElementById("jump")
+.addEventListener(
+    "pointerdown",
+    e=>{
+        e.preventDefault();
+        jump();
+    }
+);
+
+
+/* =========================================================
+   GRID HELPERS
+   ========================================================= */
+
+/*
+    Returns the box in a column at
+    a particular row.
+*/
+
+function getBoxAt(col,row){
+
+    return boxes.find(
+        box=>
+            box.col===col &&
+            box.row===row
+    );
+}
+
+
+/*
+    Find the highest empty row
+    in a column.
+*/
+
+function getOpenRow(col){
+
+    for(
+        let row=0;
+        row<MAX_ROWS;
+        row++
+    ){
+
+        if(
+            !getBoxAt(col,row)
+        ){
+            return row;
+        }
+    }
+
+    return -1;
+}
+
+
+/*
+    Is this column completely full?
+*/
+
+function columnFull(col){
+
+    return getOpenRow(col)===-1;
+}
+
+
+/*
+    Pick a random column that
+    still has room.
+*/
+
+function randomOpenColumn(){
+
+    const available=[];
+
+    for(
+        let col=0;
+        col<GRID_COLS;
+        col++
+    ){
+
+        if(
+            !columnFull(col)
+        ){
+            available.push(col);
+        }
+    }
+
+    if(
+        available.length===0
+    ){
+        return -1;
+    }
+
+    return available[
+        Math.floor(
+            Math.random()*
+            available.length
+        )
+    ];
+}
+
+
+/* =========================================================
+   START GAME
+   ========================================================= */
+
+function startGame(){
+
+    buildGrid();
+
+    state="game";
+
+    score=0;
+
+    gameTime=0;
+
+    spawnTimer=1.5;
+
+    carTimer=6;
+
+    shake=0;
+
+    boxes=[];
+
+    warnings=[];
+
+    items=[];
+
+    boards=[];
+
+    cars=[];
+
+    particles=[];
+
+    floatingTexts=[];
+
+    player.item=null;
+
+    player.shieldTime=0;
+
+    player.dead=false;
+
+    player.vx=0;
+
+    player.vy=0;
+
+    /*
+        Start player on ground.
+    */
+
+    player.x=
+        GRID_X+
+        GRID_COLS*
+        GRID_SIZE/2-
+        PLAYER_SIZE/2;
+
+    player.y=
+        groundY-
+        PLAYER_SIZE;
+
+    player.grounded=true;
+
+
+    /*
+        A few starting boxes.
+
+        They are already unpacked so
+        the game is immediately playable.
+    */
+
+    const startingCols=[
+        2,
+        4,
+        Math.max(0,GRID_COLS-3)
+    ];
+
+    for(
+        const col of startingCols
+    ){
+
+        if(
+            col>=GRID_COLS
+        )
+            continue;
+
+        boxes.push({
+
+            col:col,
+
+            row:0,
+
+            x:cellX(col),
+
+            y:cellY(0),
+
+            w:GRID_SIZE,
+
+            h:GRID_SIZE,
+
+            unpacking:false,
+
+            unpackTimer:0,
+
+            unpacked:true
+        });
+    }
+}
+
+
+/* =========================================================
+   JUMP
+   ========================================================= */
+
+function jump(){
+
+    if(
+        state!=="game"
+    )
+        return;
+
+    if(
+        player.grounded
+    ){
+
+        player.vy=
+            -JUMP_POWER;
+
+        player.grounded=false;
+
+        particleBurst(
+            player.x+
+            player.w/2,
+
+            player.y+
+            player.h,
+
+            8
+        );
+    }
+}
+
+
+/* =========================================================
+   BOX WARNING
+   ========================================================= */
+
+function createWarning(){
+
+    const col=
+        randomOpenColumn();
+
+    if(col===-1)
+        return;
+
+    /*
+        Don't spawn two warnings
+        for the same column.
+    */
+
+    if(
+        warnings.some(
+            w=>w.col===col
+        )
+    ){
+        return;
+    }
+
+    warnings.push({
+
+        col:col,
+
+        timer:1.15,
+
+        max:1.15
+    });
+}
+
+
+/* =========================================================
+   WARNING UPDATE
+   ========================================================= */
+
+function updateWarnings(dt){
+
+    for(
+        let i=
+        warnings.length-1;
+
+        i>=0;
+
+        i--
+    ){
+
+        const warning=
+            warnings[i];
+
+        warning.timer-=dt;
+
+        if(
+            warning.timer<=0
+        ){
+
+            /*
+                The column may have filled
+                while the warning was active.
+
+                Recheck it.
+            */
+
+            const row=
+                getOpenRow(
+                    warning.col
+                );
+
+            if(row!==-1){
+
+                createFallingBox(
+                    warning.col,
+                    row
+                );
+            }
+
+            warnings.splice(
+                i,
+                1
+            );
+        }
+    }
+}
+
+
+/* =========================================================
+   CREATE FALLING BOX
+   ========================================================= */
+
+function createFallingBox(
+    col,
+    targetRow
+){
+
+    boxes.push({
+
+        col:col,
+
+        row:targetRow,
+
+        x:cellX(col),
+
+        /*
+            Start well above the
+            actual play area.
+        */
+
+        y:
+            -GRID_SIZE-
+
+            Math.random()*
+            100,
+
+        w:GRID_SIZE,
+
+        h:GRID_SIZE,
+
+        falling:true,
+
+        vy:0,
+
+        unpacking:false,
+
+        unpackTimer:0,
+
+        unpacked:false
+    });
+}
+
+
+/* =========================================================
+   BOX UPDATE
+   ========================================================= */
+
+function updateBoxes(dt){
+
+    for(
+        let i=0;
+
+        i<boxes.length;
+
+        i++
+    ){
+
+        const box=
+            boxes[i];
+
+        if(
+            box.falling
+        ){
+
+            box.vy+=GRAVITY;
+
+            box.y+=
+                box.vy;
+
+
+            const targetY=
+                cellY(
+                    box.row
+                );
+
+
+            /*
+                It ALWAYS falls toward
+                its assigned grid cell.
+            */
+
+            if(
+                box.y>=targetY
+            ){
+
+                box.y=targetY;
+
+                box.vy=0;
+
+                box.falling=false;
+
+                box.unpacking=true;
+
+                box.unpackTimer=5;
+
+                box.unpacked=false;
+
+
+                /*
+                    Crush player if the
+                    falling box lands on them.
+                */
+
+                if(
+                    player.x+
+                    player.w>
+                    box.x &&
+
+                    player.x<
+                    box.x+
+                    box.w &&
+
+                    player.y+
+                    player.h>
+                    box.y+5 &&
+
+                    player.y<
+                    box.y+
+                    box.h
+                ){
+
+                    if(
+                        player.shieldTime>0
+                    ){
+
+                        player.shieldTime=0;
+
+                        particleBurst(
+                            player.x+
+                            player.w/2,
+
+                            player.y+
+                            player.h/2,
+
+                            20
+                        );
+
+                    }else{
+
+                        endGame();
+
+                        return;
+                    }
+                }
+
+
+                particleBurst(
+                    box.x+
+                    box.w/2,
+
+                    box.y+
+                    box.h,
+
+                    8
+                );
+            }
+        }
+
+        else if(
+            box.unpacking
+        ){
+
+            box.unpackTimer-=dt;
+
+            if(
+                box.unpackTimer<=0
+            ){
+
+                box.unpackTimer=0;
+
+                box.unpacking=false;
+
+                box.unpacked=true;
+
+
+                floatingText(
+                    box.x+
+                    box.w/2,
+
+                    box.y,
+                    "READY!"
+                );
+
+
+                particleBurst(
+                    box.x+
+                    box.w/2,
+
+                    box.y+
+                    box.h/2,
+
+                    10
+                );
+            }
+        }
+    }
+}
+
+
+/* =========================================================
+   PLAYER PHYSICS
+   ========================================================= */
+
+function updatePlayer(dt){
+
+    const left=
+        keys["a"] ||
+        keys["arrowleft"] ||
+        leftPressed;
+
+    const right=
+        keys["d"] ||
+        keys["arrowright"] ||
+        rightPressed;
+
+
+    /*
+        Movement.
+    */
+
+    if(left){
+
+        player.vx=
+            -MOVE_SPEED;
+    }
+    else if(right){
+
+        player.vx=
+            MOVE_SPEED;
+    }
+    else{
+
+        player.vx*=.78;
+    }
+
+
+    player.x+=
+        player.vx;
+
+
+    /*
+        Keep player inside
+        the grid area.
+    */
+
+    const minX=
+        GRID_X;
+
+    const maxX=
+        GRID_X+
+        GRID_COLS*
+        GRID_SIZE-
+        player.w;
+
+
+    if(
+        player.x<minX
+    ){
+
+        player.x=minX;
+
+        player.vx=0;
+    }
+
+    if(
+        player.x>maxX
+    ){
+
+        player.x=maxX;
+
+        player.vx=0;
+    }
+
+
+    /*
+        Gravity.
+    */
+
+    player.vy+=GRAVITY;
+
+    player.y+=
+        player.vy;
+
+
+    player.grounded=false;
+
+
+    /*
+        Height limit.
+
+        The TOP of the player cannot
+        go above the top grid row.
+    */
+
+    const ceiling=
+        cellY(
+            MAX_ROWS-1
+        );
+
+
+    if(
+        player.y<ceiling
+    ){
+
+        player.y=ceiling;
+
+        if(
+            player.vy<0
+        ){
+            player.vy=0;
+        }
+    }
+
+
+    /*
+        Ground collision.
+    */
+
+    if(
+        player.y+
+        player.h>=
+        groundY
+    ){
+
+        player.y=
+            groundY-
+            player.h;
+
+        player.vy=0;
+
+        player.grounded=true;
+    }
+
+
+    /*
+        Box platform collision.
+
+        Only finished boxes can be
+        stood on.
+    */
+
+    for(
+        const box of boxes
+    ){
+
+        if(
+            !box.unpacked
+        )
+            continue;
+
+
+        if(
+            player.x+
+            player.w-
+            5>
+            box.x &&
+
+            player.x+
+            5<
+            box.x+
+            box.w &&
+
+            player.y+
+            player.h>=
+            box.y &&
+
+            player.y+
+            player.h<=
+            box.y+
+            18 &&
+
+            player.vy>=0
+        ){
+
+            player.y=
+                box.y-
+                player.h;
+
+            player.vy=0;
+
+            player.grounded=true;
+
+            break;
+        }
+    }
+
+
+    /*
+        Board collision.
+    */
+
+    for(
+        const board of boards
+    ){
+
+        if(
+            player.x+
+            player.w-
+            5>
+            board.x &&
+
+            player.x+
+            5<
+            board.x+
+            board.w &&
+
+            player.y+
+            player.h>=
+            board.y &&
+
+            player.y+
+            player.h<=
+            board.y+18 &&
+
+            player.vy>=0
+        ){
+
+            player.y=
+                board.y-
+                player.h;
+
+            player.vy=0;
+
+            player.grounded=true;
+
+            break;
+        }
+    }
+
+
+    /*
+        Car collision.
+    */
+
+    for(
+        const car of cars
+    ){
+
+        if(
+            player.x+
+            player.w>
+            car.x &&
+
+            player.x<
+            car.x+
+            car.w &&
+
+            player.y+
+            player.h>
+            car.y &&
+
+            player.y<
+            car.y+
+            car.h
+        ){
+
+            /*
+                If the player is clearly
+                above the car, they jumped it.
+            */
+
+            if(
+                player.y+
+                player.h<=
+                car.y+12
+            ){
+
+                score+=50;
+
+                floatingText(
+                    player.x+
+                    player.w/2,
+
+                    player.y,
+                    "+50"
+                );
+
+            }else{
+
+                if(
+                    player.shieldTime>0
+                ){
+
+                    player.shieldTime=0;
+
+                    particleBurst(
+                        player.x+
+                        player.w/2,
+
+                        player.y+
+                        player.h/2,
+
+                        20
+                    );
+
+                }else{
+
+                    endGame();
+
+                    return;
+                }
+            }
+        }
+    }
+}
+
+
+/* =========================================================
+   BREAK BOX
+   ========================================================= */
+
+function breakBox(index){
+
+    const box=
+        boxes[index];
+
+    if(!box)
+        return;
+
+    /*
+        Can't break while unpacking.
+    */
+
+    if(
+        !box.unpacked
+    )
+        return;
+
+
+    score+=10;
+
+
+    /*
+        Chance to get an item.
+    */
+
+    if(
+        Math.random()<.35
+    ){
+
+        spawnItem(
+            box.x+
+            box.w/2,
+
+            box.y+
+            box.h/2
+        );
+    }
+
+
+    particleBurst(
+        box.x+
+        box.w/2,
+
+        box.y+
+        box.h/2,
+
+        20
+    );
+
+
+    floatingText(
+        box.x+
+        box.w/2,
+
+        box.y,
+
+        "+10"
+    );
+
+
+    boxes.splice(
+        index,
+        1
+    );
+}
+
+
+/* =========================================================
+   CANVAS CLICK
+   ========================================================= */
+
+canvas.addEventListener(
+    "pointerdown",
+    e=>{
+
+        const x=e.clientX;
+        const y=e.clientY;
+
+
+        if(
+            state==="menu"
+        ){
+
+            if(
+                x>
+                W/2-150 &&
+
+                x<
+                W/2+150 &&
+
+                y>
+                H*.48 &&
+
+                y<
+                H*.48+65
+            ){
+
+                startGame();
+
+                return;
+            }
+
+
+            if(
+                x>
+                W-80 &&
+                y<80
+            ){
+
+                state="info";
+
+                return;
+            }
+        }
+
+
+        if(
+            state==="info"
+        ){
+
+            state="menu";
+
+            return;
+        }
+
+
+        if(
+            state==="pause"
+        ){
+
+            if(
+                y>
+                H*.43 &&
+                y<
+                H*.43+65
+            ){
+
+                state="game";
+
+                return;
+            }
+
+
+            if(
+                y>
+                H*.43+82 &&
+                y<
+                H*.43+147
+            ){
+
+                state="menu";
+
+                return;
+            }
+        }
+
+
+        if(
+            state==="gameover"
+        ){
+
+            if(
+                y>
+                H*.57 &&
+                y<
+                H*.57+65
+            ){
+
+                startGame();
+
+                return;
+            }
+
+
+            if(
+                y>
+                H*.57+82 &&
+                y<
+                H*.57+147
+            ){
+
+                state="menu";
+
+                return;
+            }
+        }
+
+
+        if(
+            state!=="game"
+        )
+            return;
+
+
+        /*
+            Pause.
+        */
+
+        if(
+            x>
+            W-75 &&
+            y<75
+        ){
+
+            state="pause";
+
+            return;
+        }
+
+
+        /*
+            Mobile E button.
+        */
+
+        if(
+            player.item &&
+            x>
+            W-180 &&
+            y>
+            H-120
+        ){
+
+            useItem();
+
+            return;
+        }
+
+
+        /*
+            Convert screen click to
+            grid coordinates.
+        */
+
+        const col=
+            Math.floor(
+                (
+                    x-
+                    GRID_X
+                )/
+                GRID_SIZE
+            );
+
+
+        if(
+            col<0 ||
+            col>=GRID_COLS
+        )
+            return;
+
+
+        /*
+            Find the highest box in
+            this column.
+        */
+
+        for(
+            let i=
+            boxes.length-1;
+
+            i>=0;
+
+            i--
+        ){
+
+            const box=
+                boxes[i];
+
+            if(
+                box.col!==col
+            )
+                continue;
+
+            const by=
+                box.y;
+
+
+            if(
+                y>
+                by &&
+                y<
+                by+
+                GRID_SIZE
+            ){
+
+                if(
+                    box.unpacked
+                ){
+
+                    breakBox(i);
+                }
+
+                return;
+            }
+        }
+    }
+);
+
+
+/* =========================================================
+   ITEMS
+   ========================================================= */
+
+const ITEM_TYPES=[
+    "rocket",
+    "bomb",
+    "board",
+    "shield",
+    "bounce"
+];
+
+
+function spawnItem(x,y){
+
+    items.push({
+
+        x:x-15,
+
+        y:y-15,
+
+        w:30,
+
+        h:30,
+
+        vy:-5,
+
+        type:
+            ITEM_TYPES[
+                Math.floor(
+                    Math.random()*
+                    ITEM_TYPES.length
+                )
+            ],
+
+        life:20
+    });
+}
+
+
+function updateItems(dt){
+
+    for(
+        let i=
+        items.length-1;
+
+        i>=0;
+
+        i--
+    ){
+
+        const item=
+            items[i];
+
+
+        item.vy+=.25;
+
+        item.y+=
+            item.vy;
+
+
+        if(
+            item.y+
+            item.h>=
+            groundY
+        ){
+
+            item.y=
+                groundY-
+                item.h;
+
+            item.vy=0;
+        }
+
+
+        /*
+            Pickup.
+        */
+
+        if(
+            player.x+
+            player.w>
+            item.x &&
+
+            player.x<
+            item.x+
+            item.w &&
+
+            player.y+
+            player.h>
+            item.y &&
+
+            player.y<
+            item.y+
+            item.h
+        ){
+
+            /*
+                Don't pick up a second
+                item until the current one
+                is used.
+            */
+
+            if(
+                !player.item
+            ){
+
+                player.item=
+                    item.type;
+
+
+                floatingText(
+                    player.x+
+                    player.w/2,
+
+                    player.y,
+
+                    item.type.toUpperCase()
+                );
+
+
+                particleBurst(
+                    item.x+
+                    item.w/2,
+
+                    item.y+
+                    item.h/2,
+
+                    12
+                );
+
+
+                items.splice(
+                    i,
+                    1
+                );
+
+                continue;
+            }
+        }
+
+
+        item.life-=dt;
+
+
+        if(
+            item.life<=0
+        ){
+
+            items.splice(
+                i,
+                1
+            );
+        }
+    }
+}
+
+
+/* =========================================================
+   USE ITEM
+   ========================================================= */
+
+function useItem(){
+
+    if(
+        state!=="game" ||
+        !player.item
+    )
+        return;
+
+
+    const type=
+        player.item;
+
+    player.item=null;
+
+
+    /*
+        ROCKET
+    */
+
+    if(
+        type==="rocket"
+    ){
+
+        const centerCol=
+            Math.floor(
+                (
+                    player.x+
+                    player.w/2-
+                    GRID_X
+                )/
+                GRID_SIZE
+            );
+
+
+        let destroyed=0;
+
+
+        for(
+            let i=
+            boxes.length-1;
+
+            i>=0;
+
+            i--
+        ){
+
+            const box=
+                boxes[i];
+
+
+            if(
+                !box.unpacked
+            )
+                continue;
+
+
+            if(
+                Math.abs(
+                    box.col-
+                    centerCol
+                )<=2
+            ){
+
+                breakBox(i);
+
+                destroyed++;
+
+                if(
+                    destroyed>=5
+                )
+                    break;
+            }
+        }
+
+
+        particleBurst(
+            player.x+
+            player.w/2,
+
+            player.y+
+            player.h/2,
+
+            25
+        );
+
+
+        shake=8;
+    }
+
+
+    /*
+        BOMB
+    */
+
+    else if(
+        type==="bomb"
+    ){
+
+        const px=
+            player.x+
+            player.w/2;
+
+        const py=
+            player.y+
+            player.h/2;
+
+
+        for(
+            let i=
+            boxes.length-1;
+
+            i>=0;
+
+            i--
+        ){
+
+            const box=
+                boxes[i];
+
+
+            if(
+                !box.unpacked
+            )
+                continue;
+
+
+            const distance=
+                Math.hypot(
+
+                    box.x+
+                    box.w/2-
+                    px,
+
+                    box.y+
+                    box.h/2-
+                    py
+                );
+
+
+            if(
+                distance<150
+            ){
+
+                breakBox(i);
+            }
+        }
+
+
+        particleBurst(
+            px,
+            py,
+            35
+        );
+
+
+        shake=12;
+    }
+
+
+    /*
+        BOARD
+    */
+
+    else if(
+        type==="board"
+    ){
+
+        let y=
+            player.y+
+            player.h+
+            4;
+
+
+        const top=
+            cellY(
+                MAX_ROWS-1
+            );
+
+
+        y=
+            Math.max(
+                y,
+                top
+            );
+
+
+        boards.push({
+
+            x:
+                player.x+
+                player.w/2-
+                65,
+
+            y:y,
+
+            w:130,
+
+            h:12,
+
+            life:20
+        });
+    }
+
+
+    /*
+        SHIELD
+    */
+
+    else if(
+        type==="shield"
+    ){
+
+        player.shieldTime=8;
+    }
+
+
+    /*
+        BOUNCE
+    */
+
+    else if(
+        type==="bounce"
+    ){
+
+        player.vy=-19;
+
+        player.grounded=false;
+
+
+        particleBurst(
+            player.x+
+            player.w/2,
+
+            player.y+
+            player.h,
+
+            20
+        );
+    }
+}
+
+
+/* =========================================================
+   BOARDS
+   ========================================================= */
+
+function updateBoards(dt){
+
+    for(
+        let i=
+        boards.length-1;
+
+        i>=0;
+
+        i--
+    ){
+
+        boards[i].life-=dt;
+
+
+        if(
+            boards[i].life<=0
+        ){
+
+            boards.splice(
+                i,
+                1
+            );
+        }
+    }
+}
+
+
+/* =========================================================
+   CARS
+   ========================================================= */
+
+function spawnCar(){
+
+    const fromLeft=
+        Math.random()<.5;
+
+
+    cars.push({
+
+        x:
+            fromLeft
+            ?-240
+            :W+240,
+
+        y:
+            groundY-60,
+
+        w:220,
+
+        h:60,
+
+        speed:
+            fromLeft
+            ?5
+            :-5
+    });
+}
+
+
+function updateCars(dt){
+
+    for(
+        let i=
+        cars.length-1;
+
+        i>=0;
+
+        i--
+    ){
+
+        const car=
+            cars[i];
+
+
+        car.x+=
+            car.speed;
+
+
+        if(
+            car.x>
+            W+300 ||
+
+            car.x<
+            -300
+        ){
+
+            cars.splice(
+                i,
+                1
+            );
+        }
+    }
+}
+
+
+/* =========================================================
+   PARTICLES
+   ========================================================= */
+
+function particleBurst(
+    x,
+    y,
+    count
+){
+
+    for(
+        let i=0;
+
+        i<count;
+
+        i++
+    ){
+
+        particles.push({
+
+            x:x,
+
+            y:y,
+
+            vx:
+                (Math.random()-.5)*7,
+
+            vy:
+                (Math.random()-.5)*7,
+
+            size:
+                3+
+                Math.random()*4,
+
+            life:
+                .35+
+                Math.random()*.5
+        });
+    }
+}
+
+
+function updateParticles(dt){
+
+    for(
+        let i=
+        particles.length-1;
+
+        i>=0;
+
+        i--
+    ){
+
+        const p=
+            particles[i];
+
+
+        p.x+=p.vx;
+
+        p.y+=p.vy;
+
+        p.vy+=.2;
+
+        p.life-=dt;
+
+
+        if(
+            p.life<=0
+        ){
+
+            particles.splice(
+                i,
+                1
+            );
+        }
+    }
+}
+
+
+/* =========================================================
+   FLOATING TEXT
+   ========================================================= */
+
+function floatingText(
+    x,
+    y,
+    value
+){
+
+    floatingTexts.push({
+
+        x:x,
+
+        y:y,
+
+        value:value,
+
+        life:1
+    });
+}
+
+
+function updateFloatingTexts(dt){
+
+    for(
+        let i=
+        floatingTexts.length-1;
+
+        i>=0;
+
+        i--
+    ){
+
+        const t=
+            floatingTexts[i];
+
+
+        t.y-=35*dt;
+
+        t.life-=dt;
+
+
+        if(
+            t.life<=0
+        ){
+
+            floatingTexts.splice(
+                i,
+                1
+            );
+        }
+    }
+}
+
+
+/* =========================================================
+   BACKGROUND
+   ========================================================= */
+
+function drawBackground(){
+
+    const gradient=
+        ctx.createLinearGradient(
+            0,
+            0,
+            0,
+            H
+        );
+
+
+    gradient.addColorStop(
+        0,
+        "#65bddb"
+    );
+
+    gradient.addColorStop(
+        1,
+        "#e7c88f"
+    );
+
+
+    ctx.fillStyle=
+        gradient;
+
+
+    ctx.fillRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+
+    /*
+        Sun.
+    */
+
+    ctx.fillStyle=
+        "rgba(255,235,150,.8)";
+
+
+    ctx.beginPath();
+
+    ctx.arc(
+        W*.78,
+        90,
+        42,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    /*
+        Buildings.
+    */
+
+    const base=
+        groundY-18;
+
+
+    for(
+        let x=0;
+
+        x<W+100;
+
+        x+=70
+    ){
+
+        const height=
+            70+
+            ((x*13)%100);
+
+
+        ctx.fillStyle=
+            "rgba(50,75,92,.3)";
+
+
+        ctx.fillRect(
+            x,
+            base-height,
+            58,
+            height
+        );
+    }
+
+
+    /*
+        Sidewalk.
+    */
+
+    ctx.fillStyle="#aaa18f";
+
+
+    ctx.fillRect(
+        0,
+        groundY-18,
+        W,
+        18
+    );
+
+
+    /*
+        Road.
+    */
+
+    ctx.fillStyle="#30343a";
+
+
+    ctx.fillRect(
+        0,
+        groundY,
+        W,
+        H-groundY
+    );
+
+
+    /*
+        Road markings.
+    */
+
+    ctx.fillStyle="#d4c36b";
+
+
+    const offset=
+        -(gameTime*120)%140;
+
+
+    for(
+        let x=offset;
+
+        x<W;
+
+        x+=140
+    ){
+
+        ctx.fillRect(
+            x,
+            groundY+55,
+            75,
+            5
+        );
+    }
+}
+
+
+/* =========================================================
+   GRID
+   ========================================================= */
+
+function drawGrid(){
+
+    /*
+        Only show the actual playable
+        grid area.
+    */
+
+    const top=
+        cellY(
+            MAX_ROWS-1
+        );
+
+
+    /*
+        Grid background.
+    */
+
+    ctx.fillStyle=
+        "rgba(255,255,255,.05)";
+
+
+    ctx.fillRect(
+        GRID_X,
+        top,
+        GRID_COLS*
+        GRID_SIZE,
+
+        groundY-
+        top
+    );
+
+
+    /*
+        Vertical grid lines.
+    */
+
+    ctx.strokeStyle=
+        "rgba(255,255,255,.13)";
+
+    ctx.lineWidth=1;
+
+
+    for(
+        let col=0;
+
+        col<=GRID_COLS;
+
+        col++
+    ){
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+            GRID_X+
+            col*
+            GRID_SIZE,
+
+            top
+        );
+
+        ctx.lineTo(
+            GRID_X+
+            col*
+            GRID_SIZE,
+
+            groundY
+        );
+
+        ctx.stroke();
+    }
+
+
+    /*
+        Horizontal grid lines.
+    */
+
+    for(
+        let row=0;
+
+        row<=MAX_ROWS;
+
+        row++
+    ){
+
+        const y=
+            groundY-
+            row*
+            GRID_SIZE;
+
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+            GRID_X,
+            y
+        );
+
+        ctx.lineTo(
+            GRID_X+
+            GRID_COLS*
+            GRID_SIZE,
+            y
+        );
+
+        ctx.stroke();
+    }
+
+
+    /*
+        Height limit.
+    */
+
+    ctx.fillStyle=
+        "rgba(25,30,36,.95)";
+
+
+    ctx.fillRect(
+        GRID_X,
+        top-10,
+        GRID_COLS*
+        GRID_SIZE,
+        10
+    );
+
+
+    ctx.strokeStyle="#f0c44d";
+
+    ctx.lineWidth=3;
+
+    ctx.setLineDash(
+        [10,7]
+    );
+
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        GRID_X,
+        top
+    );
+
+    ctx.lineTo(
+        GRID_X+
+        GRID_COLS*
+        GRID_SIZE,
+        top
+    );
+
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+
+
+    ctx.fillStyle="#f0c44d";
+
+    ctx.font=
+        "900 10px Arial";
+
+    ctx.textAlign="center";
+
+    ctx.fillText(
+        "HEIGHT LIMIT",
+        W/2,
+        top-17
+    );
+}
+
+
+/* =========================================================
+   WARNING DRAW
+   ========================================================= */
+
+function drawWarnings(){
+
+    for(
+        const warning
+        of warnings
+    ){
+
+        const x=
+            cellX(
+                warning.col
+            );
+
+
+        const pulse=
+            .65+
+            Math.sin(
+                gameTime*16
+            )*.25;
+
+
+        ctx.globalAlpha=
+            pulse;
+
+
+        /*
+            Highlight entire column.
+        */
+
+        ctx.fillStyle=
+            "rgba(237,76,67,.12)";
+
+
+        ctx.fillRect(
+            x,
+            cellY(
+                MAX_ROWS-1
+            ),
+            GRID_SIZE,
+            groundY-
+            cellY(
+                MAX_ROWS-1
+            )
+        );
+
+
+        /*
+            Landing cell.
+        */
+
+        const row=
+            getOpenRow(
+                warning.col
+            );
+
+
+        if(row!==-1){
+
+            const y=
+                cellY(row);
+
+
+            ctx.strokeStyle="#ed4c43";
+
+            ctx.lineWidth=3;
+
+            ctx.setLineDash(
+                [7,5]
+            );
+
+
+            ctx.strokeRect(
+                x+2,
+                y+2,
+                GRID_SIZE-4,
+                GRID_SIZE-4
+            );
+
+
+            ctx.setLineDash([]);
+
+
+            ctx.fillStyle="#ed4c43";
+
+            ctx.font=
+                "900 18px Arial";
+
+            ctx.textAlign="center";
+
+
+            ctx.fillText(
+                "!",
+                x+
+                GRID_SIZE/2,
+                y+
+                GRID_SIZE/2+
+                6
+            );
+        }
+
+
+        /*
+            Countdown.
+        */
+
+        ctx.fillStyle="#fff";
+
+        ctx.font=
+            "900 11px Arial";
+
+
+        ctx.fillText(
+            warning.timer.toFixed(1),
+            x+
+            GRID_SIZE/2,
+            cellY(
+                MAX_ROWS-1
+            )-8
+        );
+
+
+        ctx.globalAlpha=1;
+    }
+}
+
+
+/* =========================================================
+   BOX DRAW
+   ========================================================= */
+
+function drawBox(box){
+
+    const x=box.x;
+    const y=box.y;
+
+
+    /*
+        Shadow.
+    */
+
+    ctx.fillStyle=
+        "rgba(0,0,0,.18)";
+
+
+    ctx.fillRect(
+        x+4,
+        y+
+        GRID_SIZE+
+        3,
+        GRID_SIZE-8,
+        5
+    );
+
+
+    /*
+        Main square.
+    */
+
+    ctx.fillStyle="#b97b45";
+
+
+    ctx.fillRect(
+        x,
+        y,
+        GRID_SIZE,
+        GRID_SIZE
+    );
+
+
+    ctx.strokeStyle="#5d3b26";
+
+    ctx.lineWidth=3;
+
+
+    ctx.strokeRect(
+        x,
+        y,
+        GRID_SIZE,
+        GRID_SIZE
+    );
+
+
+    /*
+        Tape.
+    */
+
+    ctx.fillStyle="#dfbd78";
+
+
+    ctx.fillRect(
+        x+21,
+        y,
+        8,
+        GRID_SIZE
+    );
+
+
+    /*
+        Label.
+    */
+
+    ctx.fillStyle="#f0dfba";
+
+
+    ctx.fillRect(
+        x+7,
+        y+8,
+        17,
+        13
+    );
+
+
+    /*
+        Unpacking overlay.
+    */
+
+    if(
+        box.unpacking
+    ){
+
+        ctx.fillStyle=
+            "rgba(15,20,25,.65)";
+
+
+        ctx.fillRect(
+            x,
+            y,
+            GRID_SIZE,
+            GRID_SIZE
+        );
+
+
+        /*
+            Timer.
+        */
+
+        ctx.fillStyle="#fff";
+
+        ctx.font=
+            "900 13px Arial";
+
+        ctx.textAlign="center";
+
+        ctx.fillText(
+            box.unpackTimer.toFixed(1),
+            x+
+            GRID_SIZE/2,
+            y+
+            25
+        );
+
+
+        ctx.font=
+            "900 7px Arial";
+
+
+        ctx.fillText(
+            "UNPACKING",
+            x+
+            GRID_SIZE/2,
+            y+
+            36
+        );
+
+
+        /*
+            Progress.
+        */
+
+        const progress=
+            1-
+            box.unpackTimer/5;
+
+
+        ctx.fillStyle="#f0c44d";
+
+
+        ctx.fillRect(
+            x+5,
+            y+
+            GRID_SIZE-
+            10,
+
+            (GRID_SIZE-10)*
+            progress,
+
+            5
+        );
+    }
+
+
+    /*
+        Ready indicator.
+    */
+
+    if(
+        box.unpacked
+    ){
+
+        ctx.fillStyle="#6ed08b";
+
+
+        ctx.fillRect(
+            x+
+            GRID_SIZE-
+            11,
+            y+4,
+            7,
+            7
+        );
+    }
+}
+
+
+/* =========================================================
+   PLAYER DRAW
+   ========================================================= */
+
+function drawPlayer(){
+
+    /*
+        SIMPLE BOX.
+
+        Replace this later with
+        your actual mailman sprite.
+    */
+
+    ctx.fillStyle=
+        "rgba(0,0,0,.2)";
+
+
+    ctx.fillRect(
+        player.x+4,
+        player.y+
+        player.h+
+        4,
+
+        player.w-8,
+        5
+    );
+
+
+    ctx.fillStyle="#f29a35";
+
+
+    ctx.fillRect(
+        player.x,
+        player.y,
+        player.w,
+        player.h
+    );
+
+
+    ctx.strokeStyle="#553a29";
+
+    ctx.lineWidth=3;
+
+
+    ctx.strokeRect(
+        player.x,
+        player.y,
+        player.w,
+        player.h
+    );
+
+
+    /*
+        Shield.
+    */
+
+    if(
+        player.shieldTime>0
+    ){
+
+        ctx.strokeStyle="#55c8ed";
+
+        ctx.lineWidth=4;
+
+
+        ctx.strokeRect(
+            player.x-5,
+            player.y-5,
+            player.w+10,
+            player.h+10
+        );
+    }
+}
+
+
+/* =========================================================
+   ITEM DRAW
+   ========================================================= */
+
+function drawItem(item){
+
+    const x=
+        item.x+
+        item.w/2;
+
+    const y=
+        item.y+
+        item.h/2;
+
+
+    ctx.fillStyle="#1d2730";
+
+
+    ctx.fillRect(
+        x-19,
+        y-19,
+        38,
+        38
+    );
+
+
+    ctx.strokeStyle="#fff";
+
+    ctx.lineWidth=2;
+
+
+    ctx.strokeRect(
+        x-19,
+        y-19,
+        38,
+        38
+    );
+
+
+    if(
+        item.type==="rocket"
+    ){
+
+        ctx.fillStyle="#df5148";
+
+
+        ctx.fillRect(
+            x-10,
+            y-5,
+            19,
+            10
+        );
+
+
+        ctx.fillStyle="#ffd052";
+
+
+        ctx.fillRect(
+            x-17,
+            y-3,
+            7,
+            6
+        );
+    }
+
+
+    if(
+        item.type==="bomb"
+    ){
+
+        ctx.fillStyle="#303740";
+
+
+        ctx.beginPath();
+
+        ctx.arc(
+            x,
+            y+2,
+            10,
+            0,
+            Math.PI*2
+        );
+
+        ctx.fill();
+    }
+
+
+    if(
+        item.type==="board"
+    ){
+
+        ctx.fillStyle="#a96e3e";
+
+
+        ctx.fillRect(
+            x-14,
+            y-5,
+            28,
+            10
+        );
+    }
+
+
+    if(
+        item.type==="shield"
+    ){
+
+        ctx.fillStyle="#52bde0";
+
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+            x,
+            y-13
+        );
+
+        ctx.lineTo(
+            x+11,
+            y-7
+        );
+
+        ctx.lineTo(
+            x+8,
+            y+9
+        );
+
+        ctx.lineTo(
+            x,
+            y+14
+        );
+
+        ctx.lineTo(
+            x-8,
+            y+9
+        );
+
+        ctx.lineTo(
+            x-11,
+            y-7
+        );
+
+        ctx.closePath();
+
+        ctx.fill();
+    }
+
+
+    if(
+        item.type==="bounce"
+    ){
+
+        ctx.strokeStyle="#6cda8b";
+
+        ctx.lineWidth=4;
+
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+            x-11,
+            y+8
+        );
+
+        ctx.lineTo(
+            x,
+            y-9
+        );
+
+        ctx.lineTo(
+            x+11,
+            y+8
+        );
+
+        ctx.stroke();
+    }
+}
+
+
+/* =========================================================
+   BOARD DRAW
+   ========================================================= */
+
+function drawBoard(board){
+
+    ctx.fillStyle="#9e673d";
+
+
+    ctx.fillRect(
+        board.x,
+        board.y,
+        board.w,
+        board.h
+    );
+
+
+    ctx.strokeStyle="#52351f";
+
+    ctx.lineWidth=3;
+
+
+    ctx.strokeRect(
+        board.x,
+        board.y,
+        board.w,
+        board.h
+    );
+}
+
+
+/* =========================================================
+   CAR DRAW
+   ========================================================= */
+
+function drawCar(car){
+
+    /*
+        JUST A BIG RECTANGLE.
+    */
+
+    ctx.fillStyle=
+        "rgba(0,0,0,.2)";
+
+
+    ctx.fillRect(
+        car.x+8,
+        car.y+
+        car.h+
+        4,
+
+        car.w-16,
+        6
+    );
+
+
+    ctx.fillStyle="#d94d47";
+
+
+    ctx.fillRect(
+        car.x,
+        car.y,
+        car.w,
+        car.h
+    );
+
+
+    ctx.strokeStyle="#4f2523";
+
+    ctx.lineWidth=4;
+
+
+    ctx.strokeRect(
+        car.x,
+        car.y,
+        car.w,
+        car.h
+    );
+}
+
+
+/* =========================================================
+   PARTICLE DRAW
+   ========================================================= */
+
+function drawParticles(){
+
+    for(
+        const p of particles
+    ){
+
+        ctx.globalAlpha=
+            Math.max(
+                0,
+                p.life
+            );
+
+
+        ctx.fillStyle="#e4ae68";
+
+
+        ctx.fillRect(
+            p.x,
+            p.y,
+            p.size,
+            p.size
+        );
+    }
+
+
+    ctx.globalAlpha=1;
+}
+
+
+/* =========================================================
+   FLOATING TEXT DRAW
+   ========================================================= */
+
+function drawFloatingTexts(){
+
+    for(
+        const t
+        of floatingTexts
+    ){
+
+        ctx.globalAlpha=
+            Math.max(
+                0,
+                t.life
+            );
+
+
+        ctx.fillStyle="#fff";
+
+        ctx.font=
+            "900 16px Arial";
+
+        ctx.textAlign="center";
+
+
+        ctx.fillText(
+            t.value,
+            t.x,
+            t.y
+        );
+    }
+
+
+    ctx.globalAlpha=1;
+}
+
+
+/* =========================================================
+   HUD
+   ========================================================= */
+
+function drawHUD(){
+
+    /*
+        Score.
+    */
+
+    ctx.fillStyle=
+        "rgba(20,26,33,.9)";
+
+
+    ctx.fillRect(
+        15,
+        15,
+        175,
+        65
+    );
+
+
+    ctx.fillStyle="#aeb9c4";
+
+    ctx.font=
+        "700 10px Arial";
+
+    ctx.textAlign="left";
+
+
+    ctx.fillText(
+        "SCORE",
+        28,
+        34
+    );
+
+
+    ctx.fillStyle="#fff";
+
+    ctx.font=
+        "900 26px Arial";
+
+
+    ctx.fillText(
+        Math.floor(score)
+        .toLocaleString(),
+
+        28,
+        63
+    );
+
+
+    /*
+        Height.
+    */
+
+    const playerBottom=
+        player.y+
+        player.h;
+
+
+    const height=
+        Math.max(
+            0,
+            groundY-
+            playerBottom
+        );
+
+
+    const maxHeight=
+        MAX_ROWS*
+        GRID_SIZE;
+
+
+    const percent=
+        Math.min(
+            1,
+            height/
+            maxHeight
+        );
+
+
+    ctx.fillStyle=
+        "rgba(20,26,33,.9)";
+
+
+    ctx.fillRect(
+        205,
+        15,
+        125,
+        65
+    );
+
+
+    ctx.fillStyle="#aeb9c4";
+
+    ctx.font=
+        "700 10px Arial";
+
+
+    ctx.fillText(
+        "HEIGHT",
+        217,
+        32
+    );
+
+
+    ctx.fillStyle="#3b444c";
+
+
+    ctx.fillRect(
+        217,
+        44,
+        100,
+        10
+    );
+
+
+    ctx.fillStyle=
+        percent>.85
+        ?"#ed554c"
+        :"#f0c44d";
+
+
+    ctx.fillRect(
+        217,
+        44,
+        100*
+        percent,
+        10
+    );
+
+
+    ctx.fillStyle="#fff";
+
+    ctx.font=
+        "700 9px Arial";
+
+
+    ctx.fillText(
+        Math.floor(
+            percent*100
+        )+"%",
+
+        217,
+        69
+    );
+
+
+    /*
+        Pause.
+    */
+
+    ctx.fillStyle=
+        "rgba(20,26,33,.9)";
+
+
+    ctx.fillRect(
+        W-62,
+        15,
+        47,
+        47
+    );
+
+
+    ctx.fillStyle="#fff";
+
+    ctx.font=
+        "900 18px Arial";
+
+    ctx.textAlign="center";
+
+
+    ctx.fillText(
+        "Ⅱ",
+        W-38,
+        45
+    );
+
+
+    /*
+        Item.
+    */
+
+    if(
+        player.item
+    ){
+
+        const x=
+            W-165;
+
+        const y=
+            H-90;
+
+
+        ctx.fillStyle=
+            "rgba(20,26,33,.95)";
+
+
+        ctx.fillRect(
+            x,
+            y,
+            150,
+            65
+        );
+
+
+        ctx.fillStyle="#fff";
+
+        ctx.font=
+            "900 12px Arial";
+
+
+        ctx.fillText(
+            player.item.toUpperCase(),
+            x+75,
+            y+22
+        );
+
+
+        ctx.fillStyle="#ffd052";
+
+        ctx.font=
+            "900 13px Arial";
+
+
+        ctx.fillText(
+            "PRESS E TO USE",
+            x+75,
+            y+46
+        );
+    }
+}
+
+
+/* =========================================================
+   MENU
+   ========================================================= */
+
+function drawMenu(){
+
+    drawBackground();
+
+
+    ctx.fillStyle=
+        "rgba(10,15,20,.2)";
+
+
+    ctx.fillRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+
+    ctx.textAlign="center";
+
+
+    ctx.fillStyle="#fff";
+
+    ctx.font=
+        "900 14px Arial";
+
+
+    ctx.fillText(
+        "TOONYTIME STUDIOS",
+        W/2,
+        H*.13
+    );
+
+
+    /*
+        Title.
+    */
+
+    ctx.fillStyle="#1c242d";
+
+
+    ctx.fillRect(
+        W/2-220,
+        H*.21+7,
+        440,
+        88
+    );
+
+
+    ctx.fillStyle="#f19a38";
+
+
+    ctx.fillRect(
+        W/2-220,
+        H*.21,
+        440,
+        88
+    );
+
+
+    ctx.fillStyle="#fff4d7";
+
+    ctx.font=
+        `900 ${Math.min(
+            52,
+            W*.115
+        )}px Arial`;
+
+
+    ctx.fillText(
+        "BOX BOUNCE",
+        W/2,
+        H*.21+57
+    );
+
+
+    ctx.fillStyle="#34434b";
+
+    ctx.font=
+        "700 13px Arial";
+
+
+    ctx.fillText(
+        "STACK • BREAK • SURVIVE",
+        W/2,
+        H*.39
+    );
+
+
+    /*
+        Play.
+    */
+
+    ctx.fillStyle="#252e37";
+
+
+    ctx.fillRect(
+        W/2-150,
+        H*.48+6,
+        300,
+        65
+    );
+
+
+    ctx.fillStyle="#ffd052";
+
+
+    ctx.fillRect(
+        W/2-150,
+        H*.48,
+        300,
+        65
+    );
+
+
+    ctx.fillStyle="#35270f";
+
+    ctx.font=
+        "900 21px Arial";
+
+
+    ctx.fillText(
+        "PLAY",
+        W/2,
+        H*.48+40
+    );
+
+
+    /*
+        Best.
+    */
+
+    ctx.fillStyle="#33434d";
+
+    ctx.font=
+        "700 15px Arial";
+
+
+    ctx.fillText(
+        "BEST  "+
+        best.toLocaleString(),
+
+        W/2,
+        H*.66
+    );
+
+
+    /*
+        Controls.
+    */
+
+    ctx.fillStyle="#596871";
+
+    ctx.font=
+        "600 11px Arial";
+
+
+    ctx.fillText(
+        "A / D OR ARROWS • SPACE TO JUMP • E TO USE",
+        W/2,
+        H*.81
+    );
+
+
+    /*
+        Info.
+    */
+
+    ctx.fillStyle="#1c242d";
+
+
+    ctx.beginPath();
+
+    ctx.arc(
+        W-43,
+        43,
+        27,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    ctx.fillStyle="#fff";
+
+    ctx.font=
+        "900 20px Arial";
+
+
+    ctx.fillText(
+        "i",
+        W-43,
+        50
+    );
+}
+
+
+/* =========================================================
+   BUTTON
+   ========================================================= */
+
+function button(
+    label,
+    y,
+    color
+){
+
+    ctx.fillStyle="#171e26";
+
+
+    ctx.fillRect(
+        W/2-150,
+        y+6,
+        300,
+        65
+    );
+
+
+    ctx.fillStyle=color;
+
+
+    ctx.fillRect(
+        W/2-150,
+        y,
+        300,
+        65
+    );
+
+
+    ctx.fillStyle=
+        color==="#ffd052"
+        ?"#33250d"
+        :"#fff";
+
+
+    ctx.font=
+        "900 19px Arial";
+
+    ctx.textAlign="center";
+
+
+    ctx.fillText(
+        label,
+        W/2,
+        y+40
+    );
+}
+
+
+/* =========================================================
+   PAUSE
+   ========================================================= */
+
+function drawPause(){
+
+    drawGame();
+
+
+    ctx.fillStyle=
+        "rgba(5,8,12,.7)";
+
+
+    ctx.fillRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+
+    ctx.fillStyle="#fff";
+
+    ctx.font=
+        "900 44px Arial";
+
+    ctx.textAlign="center";
+
+
+    ctx.fillText(
+        "PAUSED",
+        W/2,
+        H*.34
+    );
+
+
+    button(
+        "RESUME",
+        H*.43,
+        "#ffd052"
+    );
+
+
+    button(
+        "HOME",
+        H*.43+82,
+        "#343e48"
+    );
+}
+
+
+/* =========================================================
+   GAME OVER
+   ========================================================= */
+
+function drawGameOver(){
+
+    drawGame();
+
+
+    ctx.fillStyle=
+        "rgba(5,8,12,.72)";
+
+
+    ctx.fillRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+
+    ctx.textAlign="center";
+
+
+    ctx.fillStyle="#ff665b";
+
+    ctx.font=
+        "900 43px Arial";
+
+
+    ctx.fillText(
+        "GAME OVER",
+        W/2,
+        H*.30
+    );
+
+
+    ctx.fillStyle="#fff";
+
+    ctx.font=
+        "900 50px Arial";
+
+
+    ctx.fillText(
+        Math.floor(score)
+        .toLocaleString(),
+
+        W/2,
+        H*.41
+    );
+
+
+    ctx.fillStyle="#aeb9c4";
+
+    ctx.font=
+        "700 11px Arial";
+
+
+    ctx.fillText(
+        "FINAL SCORE",
+        W/2,
+        H*.47
+    );
+
+
+    button(
+        "PLAY AGAIN",
+        H*.57,
+        "#ffd052"
+    );
+
+
+    button(
+        "HOME",
+        H*.57+82,
+        "#343e48"
+    );
+}
+
+
+/* =========================================================
+   INFO
+   ========================================================= */
+
+function drawInfo(){
+
+    drawBackground();
+
+
+    ctx.fillStyle=
+        "rgba(7,11,15,.72)";
+
+
+    ctx.fillRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+
+    ctx.textAlign="center";
+
+
+    ctx.fillStyle="#fff";
+
+    ctx.font=
+        "900 30px Arial";
+
+
+    ctx.fillText(
+        "BOX BOUNCE",
+        W/2,
+        65
+    );
+
+
+    const info=[
+
+        "BOXES FALL INTO A GRID.",
+
+        "",
+
+        "Each box gets its own column.",
+
+        "Boxes stack one cell at a time.",
+
+        "",
+
+        "A warning appears before a box falls.",
+
+        "",
+
+        "After landing, a box takes",
+
+        "5 SECONDS to unpack.",
+
+        "",
+
+        "Only READY boxes can be broken.",
+
+        "",
+
+        "A / D or ARROWS = MOVE",
+
+        "SPACE / W / UP = JUMP",
+
+        "E = USE ITEM",
+
+        "",
+
+        "ROCKET = BREAK BOXES",
+
+        "BOMB = CLEAR AN AREA",
+
+        "BOARD = PLATFORM",
+
+        "SHIELD = PROTECTION",
+
+        "BOUNCE = SUPER JUMP",
+
+        "",
+
+        "You cannot pass the HEIGHT LIMIT.",
+
+        "Use the stack to escape the car."
+    ];
+
+
+    let y=105;
+
+
+    for(
+        const line
+        of info
+    ){
+
+        ctx.fillStyle=
+            line===""
+            ?"transparent"
+            :"#dce5eb";
+
+
+        ctx.font=
+            "600 12px Arial";
+
+
+        ctx.fillText(
+            line,
+            W/2,
+            y
+        );
+
+
+        y+=21;
+    }
+
+
+    button(
+        "BACK",
+        H-80,
+        "#343e48"
+    );
+}
+
+
+/* =========================================================
+   DRAW GAME
+   ========================================================= */
+
+function drawGame(){
+
+    drawBackground();
+
+    drawGrid();
+
+    drawWarnings();
+
+
+    /*
+        Boards.
+    */
+
+    for(
+        const board
+        of boards
+    ){
+
+        drawBoard(board);
+    }
+
+
+    /*
+        Boxes.
+    */
+
+    for(
+        const box
+        of boxes
+    ){
+
+        drawBox(box);
+    }
+
+
+    /*
+        Items.
+    */
+
+    for(
+        const item
+        of items
+    ){
+
+        drawItem(item);
+    }
+
+
+    /*
+        Cars.
+    */
+
+    for(
+        const car
+        of cars
+    ){
+
+        drawCar(car);
+    }
+
+
+    /*
+        Player.
+    */
+
+    drawPlayer();
+
+
+    drawParticles();
+
+    drawFloatingTexts();
+
+    drawHUD();
+}
+
+
+/* =========================================================
+   UPDATE
+   ========================================================= */
+
+function update(dt){
+
+    if(
+        state!=="game"
+    )
+        return;
+
+
+    gameTime+=dt;
+
+
+    /*
+        Box spawn timer.
+    */
+
+    spawnTimer-=dt;
+
+
+    if(
+        spawnTimer<=0
+    ){
+
+        createWarning();
+
+
+        spawnTimer=
+            Math.max(
+                .65,
+                1.4-
+                gameTime*
+                .004
+            );
+    }
+
+
+    /*
+        Car timer.
+    */
+
+    carTimer-=dt;
+
+
+    if(
+        carTimer<=0
+    ){
+
+        spawnCar();
+
+
+        carTimer=
+            Math.max(
+                3.5,
+                7-
+                gameTime*
+                .012
+            );
+    }
+
+
+    updateWarnings(dt);
+
+    updateBoxes(dt);
+
+
+    if(
+        state!=="game"
+    )
+        return;
+
+
+    updatePlayer(dt);
+
+
+    if(
+        state!=="game"
+    )
+        return;
+
+
+    updateItems(dt);
+
+    updateBoards(dt);
+
+    updateCars(dt);
+
+    updateParticles(dt);
+
+    updateFloatingTexts(dt);
+
+
+    /*
+        Shield timer.
+    */
+
+    if(
+        player.shieldTime>0
+    ){
+
+        player.shieldTime-=dt;
+
+        if(
+            player.shieldTime<0
+        ){
+            player.shieldTime=0;
+        }
+    }
+
+
+    /*
+        Survival score.
+    */
+
+    score+=dt;
+
+
+    /*
+        Camera is intentionally NOT
+        used here.
+
+        The grid itself is the fixed
+        height-limited play area.
+    */
+
+
+    if(shake>0){
+
+        shake*=.88;
+
+        if(shake<.1)
+            shake=0;
+    }
+}
+
+
+/* =========================================================
+   GAME OVER
+   ========================================================= */
+
+function endGame(){
+
+    if(
+        state!=="game"
+    )
+        return;
+
+
+    player.dead=true;
+
+
+    if(
+        score>best
+    ){
+
+        best=
+            Math.floor(score);
+
+
+        localStorage.setItem(
+            "boxBounceBest",
+            best
+        );
+    }
+
+
+    shake=15;
+
+
+    particleBurst(
+        player.x+
+        player.w/2,
+
+        player.y+
+        player.h/2,
+
+        30
+    );
+
+
+    state="gameover";
+}
+
+
+/* =========================================================
+   MAIN LOOP
+   ========================================================= */
+
+let last=
+    performance.now();
+
+
+function loop(now){
+
+    const dt=
+        Math.min(
+            .033,
+            (now-last)/
+            1000
+        );
+
+
+    last=now;
+
+
+    update(dt);
+
+
+    ctx.clearRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+
+    /*
+        Screen shake.
+    */
+
+    if(
+        shake>0 &&
+        state!=="menu"
+    ){
+
+        ctx.save();
+
+        ctx.translate(
+            (Math.random()-.5)*
+            shake,
+
+            (Math.random()-.5)*
+            shake
+        );
+    }
+
+
+    if(
+        state==="menu"
+    ){
+
+        drawMenu();
+    }
+
+    else if(
+        state==="game"
+    ){
+
+        drawGame();
+    }
+
+    else if(
+        state==="pause"
+    ){
+
+        drawPause();
+    }
+
+    else if(
+        state==="gameover"
+    ){
+
+        drawGameOver();
+    }
+
+    else if(
+        state==="info"
+    ){
+
+        drawInfo();
+    }
+
+
+    if(
+        shake>0 &&
+        state!=="menu"
+    ){
+
+        ctx.restore();
+    }
+
+
+    requestAnimationFrame(
+        loop
+    );
+}
+
+
+resize();
+
+requestAnimationFrame(
+    loop
+);
+
+</script>
+
+</body>
+</html>
