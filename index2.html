@@ -75,6 +75,7 @@ canvas{
 <div id="jump" class="mobile">▲</div>
 
 <script>
+<script>
 
 /* =========================================================
    BOX BOUNCE
@@ -1039,54 +1040,99 @@ function updatePlayer(dt){
 
 
     /*
-        Box platform collision.
+        Box collision.
 
-        Only finished boxes can be
-        stood on.
+        Boxes act like solid walls
+        and platforms.
     */
 
     for(
         const box of boxes
     ){
 
-        if(
-            !box.unpacked
-        )
+        if(!box.unpacked)
             continue;
 
+        const playerLeft=player.x;
+        const playerRight=player.x+player.w;
+        const playerTop=player.y;
+        const playerBottom=player.y+player.h;
 
+        const boxLeft=box.x;
+        const boxRight=box.x+box.w;
+        const boxTop=box.y;
+        const boxBottom=box.y+box.h;
+
+        const hit=
+            playerRight>boxLeft &&
+            playerLeft<boxRight &&
+            playerBottom>boxTop &&
+            playerTop<boxBottom;
+
+        if(!hit)
+            continue;
+
+        const overlapLeft=
+            playerRight-boxLeft;
+
+        const overlapRight=
+            boxRight-playerLeft;
+
+        const overlapTop=
+            playerBottom-boxTop;
+
+        const overlapBottom=
+            boxBottom-playerTop;
+
+        const minOverlap=
+            Math.min(
+                overlapLeft,
+                overlapRight,
+                overlapTop,
+                overlapBottom
+            );
+
+        /*
+            Land on top of the box.
+        */
         if(
-            player.x+
-            player.w-
-            5>
-            box.x &&
-
-            player.x+
-            5<
-            box.x+
-            box.w &&
-
-            player.y+
-            player.h>=
-            box.y &&
-
-            player.y+
-            player.h<=
-            box.y+
-            18 &&
-
+            minOverlap===overlapTop &&
             player.vy>=0
         ){
-
-            player.y=
-                box.y-
-                player.h;
-
+            player.y=boxTop-player.h;
             player.vy=0;
-
             player.grounded=true;
+        }
 
-            break;
+        /*
+            Hit the underside of the box.
+        */
+        else if(
+            minOverlap===overlapBottom &&
+            player.vy<0
+        ){
+            player.y=boxBottom;
+            player.vy=0;
+        }
+
+        /*
+            Hit the left side of the box.
+        */
+        else if(
+            minOverlap===overlapLeft
+        ){
+            player.x=boxLeft-player.w;
+            player.vx=0;
+        }
+
+        /*
+            Hit the right side of the box.
+        */
+        else if(
+            minOverlap===overlapRight
+        ){
+            player.x=boxRight;
+            player.vx=0;
         }
     }
 
@@ -1979,7 +2025,6 @@ function spawnCar(){
     });
 }
 
-
 function updateCars(dt){
 
     for(
@@ -2057,7 +2102,6 @@ function particleBurst(
     }
 }
 
-
 function updateParticles(dt){
 
     for(
@@ -2116,7 +2160,6 @@ function floatingText(
         life:1
     });
 }
-
 
 function updateFloatingTexts(dt){
 
@@ -4318,6 +4361,8 @@ resize();
 requestAnimationFrame(
     loop
 );
+
+</script>
 
 </script>
 
