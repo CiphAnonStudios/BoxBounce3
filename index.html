@@ -1,0 +1,4209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Box Bounce</title>
+
+<style>
+*{
+    box-sizing:border-box;
+    margin:0;
+    padding:0;
+    user-select:none;
+    -webkit-user-select:none;
+    touch-action:none;
+}
+
+html,body{
+    width:100%;
+    height:100%;
+    overflow:hidden;
+    background:#151922;
+}
+
+canvas{
+    position:fixed;
+    inset:0;
+    width:100%;
+    height:100%;
+}
+
+#mobileControls{
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+}
+
+.btn{
+    position:absolute;
+    width:70px;
+    height:70px;
+    border-radius:18px;
+    border:2px solid rgba(255,255,255,.2);
+    background:rgba(15,20,28,.75);
+    color:white;
+    font:bold 28px Arial;
+    display:none;
+    align-items:center;
+    justify-content:center;
+    pointer-events:auto;
+}
+
+#left{
+    left:16px;
+    bottom:18px;
+}
+
+#right{
+    left:96px;
+    bottom:18px;
+}
+
+#jump{
+    right:16px;
+    bottom:18px;
+}
+
+@media(max-width:800px){
+    .btn{
+        display:flex;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="mobileControls">
+    <div class="btn" id="left">◀</div>
+    <div class="btn" id="right">▶</div>
+    <div class="btn" id="jump">▲</div>
+</div>
+
+<script>
+
+/* =========================================================
+   BOX BOUNCE
+   Shape Prototype
+   ToonyTime Studios
+   ========================================================= */
+
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+
+let W=innerWidth;
+let H=innerHeight;
+let DPR=1;
+
+function resize(){
+
+    W=innerWidth;
+    H=innerHeight;
+
+    DPR=Math.min(devicePixelRatio||1,2);
+
+    canvas.width=W*DPR;
+    canvas.height=H*DPR;
+
+    canvas.style.width=W+"px";
+    canvas.style.height=H+"px";
+
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+
+addEventListener("resize",resize);
+resize();
+
+
+/* =========================================================
+   SAVE
+   ========================================================= */
+
+const SAVE_KEY="boxBounceSave";
+
+let saveData={
+    highScore:0,
+    boxesBroken:0,
+    gamesPlayed:0,
+    highestPile:0
+};
+
+try{
+
+    const saved=localStorage.getItem(SAVE_KEY);
+
+    if(saved){
+        saveData={
+            ...saveData,
+            ...JSON.parse(saved)
+        };
+    }
+
+}catch(e){}
+
+function save(){
+
+    try{
+        localStorage.setItem(
+            SAVE_KEY,
+            JSON.stringify(saveData)
+        );
+    }catch(e){}
+}
+
+
+/* =========================================================
+   GAME STATE
+   ========================================================= */
+
+let state="menu";
+
+let score=0;
+let combo=0;
+let comboTimer=0;
+
+let time=0;
+
+let boxes=[];
+let warnings=[];
+let items=[];
+let boards=[];
+let cars=[];
+let rockets=[];
+let particles=[];
+let texts=[];
+
+let boxSpawnTimer=0;
+let carSpawnTimer=5;
+let eventTimer=15;
+
+let activeEvent="";
+let eventTime=0;
+
+let cameraY=0;
+let cameraTarget=0;
+
+let shake=0;
+
+
+/* =========================================================
+   WORLD SETTINGS
+   ========================================================= */
+
+const GROUND_HEIGHT=105;
+
+const BOX_SIZE=48;
+
+/*
+    All boxes use this exact size.
+    Replace the drawBox() template later with
+    your own box sprite.
+*/
+
+function groundY(){
+    return H-GROUND_HEIGHT;
+}
+
+
+/* =========================================================
+   INPUT
+   ========================================================= */
+
+const keys={};
+
+let touchLeft=false;
+let touchRight=false;
+
+addEventListener("keydown",e=>{
+
+    keys[e.key.toLowerCase()]=true;
+
+    if(
+        e.key===" " ||
+        e.key==="ArrowUp" ||
+        e.key.toLowerCase()==="w"
+    ){
+        e.preventDefault();
+
+        if(state==="game"){
+            jump();
+        }
+    }
+
+    if(
+        e.key==="ArrowLeft" ||
+        e.key==="ArrowRight"
+    ){
+        e.preventDefault();
+    }
+
+    if(e.key.toLowerCase()==="p"){
+
+        if(state==="game")
+            state="pause";
+
+        else if(state==="pause")
+            state="game";
+    }
+
+    if(
+        e.key.toLowerCase()==="r" &&
+        state==="gameover"
+    ){
+        startGame();
+    }
+});
+
+addEventListener("keyup",e=>{
+    keys[e.key.toLowerCase()]=false;
+});
+
+
+/* =========================================================
+   MOBILE INPUT
+   ========================================================= */
+
+function holdButton(element,down,up){
+
+    element.addEventListener(
+        "pointerdown",
+        e=>{
+            e.preventDefault();
+            down();
+        }
+    );
+
+    element.addEventListener(
+        "pointerup",
+        e=>{
+            e.preventDefault();
+            up();
+        }
+    );
+
+    element.addEventListener(
+        "pointercancel",
+        up
+    );
+
+    element.addEventListener(
+        "pointerleave",
+        up
+    );
+}
+
+holdButton(
+    document.getElementById("left"),
+    ()=>touchLeft=true,
+    ()=>touchLeft=false
+);
+
+holdButton(
+    document.getElementById("right"),
+    ()=>touchRight=true,
+    ()=>touchRight=false
+);
+
+document.getElementById("jump")
+.addEventListener(
+    "pointerdown",
+    e=>{
+        e.preventDefault();
+        jump();
+    }
+);
+
+
+/* =========================================================
+   PLAYER
+   ========================================================= */
+
+const player={
+
+    x:0,
+    y:0,
+
+    width:38,
+    height:38,
+
+    vx:0,
+    vy:0,
+
+    grounded:false,
+    coyote:0,
+
+    angle:0,
+
+    squash:0,
+
+    item:null,
+
+    shieldTime:0
+};
+
+function resetPlayer(){
+
+    player.x=W/2-19;
+
+    player.y=
+        groundY()-player.height;
+
+    player.vx=0;
+    player.vy=0;
+
+    player.grounded=true;
+    player.coyote=.1;
+
+    player.angle=0;
+    player.squash=0;
+
+    player.item=null;
+    player.shieldTime=0;
+}
+
+
+/* =========================================================
+   START GAME
+   ========================================================= */
+
+function startGame(){
+
+    state="game";
+
+    score=0;
+    combo=0;
+    comboTimer=0;
+
+    time=0;
+
+    boxes=[];
+    warnings=[];
+    items=[];
+    boards=[];
+    cars=[];
+    rockets=[];
+    particles=[];
+    texts=[];
+
+    boxSpawnTimer=.8;
+    carSpawnTimer=5;
+    eventTimer=13;
+
+    activeEvent="";
+    eventTime=0;
+
+    cameraY=0;
+    cameraTarget=0;
+
+    shake=0;
+
+    resetPlayer();
+
+    saveData.gamesPlayed++;
+
+    save();
+
+    /*
+        Starter floor.
+    */
+
+    for(let i=0;i<7;i++){
+
+        spawnBox(
+            30+i*(BOX_SIZE+4),
+            groundY()-BOX_SIZE
+        );
+    }
+}
+
+
+/* =========================================================
+   JUMP
+   ========================================================= */
+
+function jump(){
+
+    if(state!=="game")
+        return;
+
+    if(
+        player.grounded ||
+        player.coyote>0
+    ){
+
+        player.vy=-14;
+
+        player.grounded=false;
+        player.coyote=0;
+
+        player.squash=.2;
+
+        dust(
+            player.x+player.width/2,
+            player.y+player.height
+        );
+    }
+}
+
+
+/* =========================================================
+   BOX SPAWN
+   ========================================================= */
+
+function spawnBox(x,y){
+
+    boxes.push({
+
+        x:x,
+
+        y:y,
+
+        width:BOX_SIZE,
+        height:BOX_SIZE,
+
+        vx:0,
+        vy:0,
+
+        falling:true,
+
+        /* boxes DO NOT rotate */
+
+        id:Math.random()
+    });
+}
+
+
+/* =========================================================
+   BOX WARNING
+   ========================================================= */
+
+function createWarning(){
+
+    const x=
+        20+
+        Math.random()*
+        Math.max(
+            20,
+            W-BOX_SIZE-40
+        );
+
+    warnings.push({
+
+        x:x,
+
+        y:0,
+
+        width:BOX_SIZE,
+
+        height:BOX_SIZE,
+
+        timer:1.15,
+
+        maxTime:1.15
+    });
+}
+
+function updateWarnings(dt){
+
+    for(let i=warnings.length-1;i>=0;i--){
+
+        const w=warnings[i];
+
+        w.timer-=dt;
+
+        if(w.timer<=0){
+
+            spawnBox(
+                w.x,
+                -BOX_SIZE
+            );
+
+            warnings.splice(i,1);
+        }
+    }
+}
+
+
+/* =========================================================
+   PLAYER PHYSICS
+   ========================================================= */
+
+function updatePlayer(dt){
+
+    const left=
+        keys["arrowleft"] ||
+        keys["a"] ||
+        touchLeft;
+
+    const right=
+        keys["arrowright"] ||
+        keys["d"] ||
+        touchRight;
+
+    if(left)
+        player.vx-=.55;
+
+    if(right)
+        player.vx+=.55;
+
+    if(!left&&!right)
+        player.vx*=.90;
+
+    player.vx=
+        Math.max(
+            -7.5,
+            Math.min(7.5,player.vx)
+        );
+
+    let gravity=.62;
+
+    if(activeEvent==="LOW GRAVITY")
+        gravity=.36;
+
+    player.vy+=gravity;
+
+    player.x+=player.vx;
+    player.y+=player.vy;
+
+    /*
+        Screen wrapping.
+    */
+
+    if(player.x+player.width<0)
+        player.x=W;
+
+    if(player.x>W)
+        player.x=-player.width;
+
+    player.grounded=false;
+
+    /*
+        Ground.
+    */
+
+    if(
+        player.y+
+        player.height>=groundY()
+    ){
+
+        player.y=
+            groundY()-
+            player.height;
+
+        if(player.vy>1){
+
+            player.vy=
+                -Math.min(
+                    12,
+                    player.vy*.65
+                );
+
+        }else{
+
+            player.vy=0;
+        }
+
+        player.grounded=true;
+        player.coyote=.12;
+
+        player.squash=.16;
+    }
+
+    /*
+        Boxes.
+    */
+
+    for(const box of boxes){
+
+        if(
+            player.x+
+            player.width-5>
+            box.x &&
+
+            player.x+5<
+            box.x+box.width &&
+
+            player.y+
+            player.height>=
+            box.y &&
+
+            player.y+
+            player.height<=
+            box.y+18 &&
+
+            player.vy>=0
+        ){
+
+            player.y=
+                box.y-
+                player.height;
+
+            let bounce=
+                Math.max(
+                    9.5,
+                    Math.abs(player.vy)*.72
+                );
+
+            if(activeEvent==="HIGH BOUNCE")
+                bounce*=1.3;
+
+            player.vy=-bounce;
+
+            player.grounded=true;
+
+            player.squash=.18;
+
+            break;
+        }
+    }
+
+    /*
+        Boards.
+    */
+
+    for(const board of boards){
+
+        if(
+            player.x+
+            player.width-4>
+            board.x &&
+
+            player.x+4<
+            board.x+board.width &&
+
+            player.y+
+            player.height>=
+            board.y &&
+
+            player.y+
+            player.height<=
+            board.y+15 &&
+
+            player.vy>=0
+        ){
+
+            player.y=
+                board.y-
+                player.height;
+
+            player.vy=
+                -Math.max(
+                    9,
+                    Math.abs(player.vy)*.7
+                );
+
+            player.grounded=true;
+
+            break;
+        }
+    }
+
+    /*
+        Cars.
+    */
+
+    if(player.shieldTime<=0){
+
+        for(const car of cars){
+
+            if(
+                player.x+
+                player.width-5>
+                car.x &&
+
+                player.x+5<
+                car.x+car.width &&
+
+                player.y+
+                player.height>
+                car.y+5 &&
+
+                player.y<
+                car.y+car.height
+            ){
+
+                /*
+                    Jumping over car.
+                */
+
+                if(
+                    player.y+
+                    player.height<
+                    car.y+18
+                ){
+
+                    score+=75;
+
+                    floatingText(
+                        player.x,
+                        player.y,
+                        "+75 DODGE"
+                    );
+
+                    player.vy=-12;
+
+                    particlesBurst(
+                        player.x,
+                        player.y+
+                        player.height,
+                        10
+                    );
+
+                }else{
+
+                    endGame();
+                    return;
+                }
+            }
+        }
+    }
+
+    /*
+        Shield timer.
+    */
+
+    if(player.shieldTime>0)
+        player.shieldTime-=dt;
+
+    /*
+        Small rotation while moving.
+
+        This is ONLY the mailman.
+        Boxes never rotate.
+    */
+
+    player.angle=
+        player.vx*.025;
+
+    if(player.grounded)
+        player.angle*=.5;
+
+    if(player.coyote>0)
+        player.coyote-=dt;
+
+    if(player.squash>0)
+        player.squash-=dt;
+}
+
+
+/* =========================================================
+   BOX PHYSICS
+   ========================================================= */
+
+function updateBoxes(dt){
+
+    for(let i=0;i<boxes.length;i++){
+
+        const b=boxes[i];
+
+        b.vy+=
+            activeEvent==="LOW GRAVITY"
+            ?.3
+            :.55;
+
+        b.x+=b.vx;
+        b.y+=b.vy;
+
+        /*
+            NO ROTATION.
+        */
+
+        if(b.x<0){
+
+            b.x=0;
+
+            b.vx=
+                Math.abs(b.vx)*.3;
+        }
+
+        if(
+            b.x+
+            b.width>
+            W
+        ){
+
+            b.x=
+                W-
+                b.width;
+
+            b.vx=
+                -Math.abs(b.vx)*.3;
+        }
+
+        /*
+            Ground.
+        */
+
+        if(
+            b.y+
+            b.height>=
+            groundY()
+        ){
+
+            b.y=
+                groundY()-
+                b.height;
+
+            if(Math.abs(b.vy)>1){
+
+                b.vy=
+                    -b.vy*.2;
+
+            }else{
+
+                b.vy=0;
+            }
+
+            b.vx*=.8;
+        }
+
+        /*
+            Stack on boxes.
+
+            Every box is the same size,
+            so the pile stays predictable.
+        */
+
+        for(let j=0;j<boxes.length;j++){
+
+            if(i===j)
+                continue;
+
+            const other=boxes[j];
+
+            if(
+                b.vy>=0 &&
+
+                b.x+
+                b.width-5>
+                other.x &&
+
+                b.x+5<
+                other.x+
+                other.width &&
+
+                b.y+
+                b.height>=
+                other.y &&
+
+                b.y+
+                b.height<=
+                other.y+18
+            ){
+
+                b.y=
+                    other.y-
+                    b.height;
+
+                b.vy=0;
+
+                b.vx=
+                    other.vx*.08;
+
+                break;
+            }
+        }
+
+        /*
+            Boards.
+        */
+
+        for(const board of boards){
+
+            if(
+                b.vy>=0 &&
+
+                b.x+
+                b.width>
+                board.x &&
+
+                b.x<
+                board.x+
+                board.width &&
+
+                b.y+
+                b.height>=
+                board.y &&
+
+                b.y+
+                b.height<=
+                board.y+18
+            ){
+
+                b.y=
+                    board.y-
+                    b.height;
+
+                b.vy=0;
+            }
+        }
+    }
+}
+
+
+/* =========================================================
+   BREAK BOX
+   ========================================================= */
+
+function breakBox(index){
+
+    if(index<0||index>=boxes.length)
+        return;
+
+    const b=boxes[index];
+
+    combo++;
+    comboTimer=2;
+
+    let points=
+        10+
+        Math.min(
+            combo*3,
+            75
+        );
+
+    score+=points;
+
+    saveData.boxesBroken++;
+
+    floatingText(
+        b.x+
+        b.width/2,
+        b.y,
+        "+"+points
+    );
+
+    particlesBurst(
+        b.x+
+        b.width/2,
+        b.y+
+        b.height/2,
+        14
+    );
+
+    /*
+        Random item chance.
+    */
+
+    if(Math.random()<.22){
+
+        spawnItem(
+            b.x+
+            b.width/2,
+            b.y+
+            b.height/2
+        );
+    }
+
+    boxes.splice(index,1);
+}
+
+
+/* =========================================================
+   CLICK / TAP
+   ========================================================= */
+
+canvas.addEventListener(
+    "pointerdown",
+    e=>{
+
+        const x=e.clientX;
+        const y=e.clientY;
+
+        /*
+            MENU
+        */
+
+        if(state==="menu"){
+
+            if(
+                x>
+                W/2-150 &&
+
+                x<
+                W/2+150 &&
+
+                y>
+                H*.48 &&
+
+                y<
+                H*.48+70
+            ){
+
+                startGame();
+                return;
+            }
+
+            if(
+                x>
+                W-85 &&
+                y<85
+            ){
+
+                state="info";
+                return;
+            }
+        }
+
+        /*
+            INFO
+        */
+
+        if(state==="info"){
+
+            if(y>H-110)
+                state="menu";
+
+            return;
+        }
+
+        /*
+            GAMEOVER
+        */
+
+        if(state==="gameover"){
+
+            if(
+                y>
+                H*.60 &&
+                y<
+                H*.60+70
+            ){
+
+                startGame();
+                return;
+            }
+
+            if(
+                y>
+                H*.60+85 &&
+                y<
+                H*.60+150
+            ){
+
+                state="menu";
+                return;
+            }
+        }
+
+        /*
+            PAUSE
+        */
+
+        if(state==="pause"){
+
+            if(
+                y>
+                H*.45 &&
+                y<
+                H*.45+65
+            ){
+
+                state="game";
+                return;
+            }
+
+            if(
+                y>
+                H*.45+80 &&
+                y<
+                H*.45+145
+            ){
+
+                state="menu";
+                return;
+            }
+        }
+
+        if(state!=="game")
+            return;
+
+        /*
+            Pause button.
+        */
+
+        if(
+            x>W-75 &&
+            y<75
+        ){
+
+            state="pause";
+            return;
+        }
+
+        /*
+            Item.
+        */
+
+        if(
+            player.item &&
+            x>W-145 &&
+            y>H-120
+        ){
+
+            useItem();
+            return;
+        }
+
+        /*
+            Boxes.
+
+            Convert screen position
+            into world position.
+        */
+
+        const worldY=
+            y+
+            cameraY;
+
+        for(
+            let i=boxes.length-1;
+            i>=0;
+            i--
+        ){
+
+            const b=boxes[i];
+
+            if(
+                x>b.x &&
+                x<
+                b.x+b.width &&
+
+                worldY>b.y &&
+                worldY<
+                b.y+b.height
+            ){
+
+                breakBox(i);
+                return;
+            }
+        }
+    }
+);
+
+
+/* =========================================================
+   ITEMS
+   ========================================================= */
+
+const itemTypes=[
+    "rocket",
+    "bomb",
+    "board",
+    "magnet",
+    "shield",
+    "bounce",
+    "vacuum"
+];
+
+function spawnItem(x,y){
+
+    items.push({
+
+        x:x-15,
+        y:y-15,
+
+        width:30,
+        height:30,
+
+        type:
+            itemTypes[
+                Math.floor(
+                    Math.random()*
+                    itemTypes.length
+                )
+            ],
+
+        vy:-4,
+
+        life:15,
+
+        spin:0
+    });
+}
+
+function updateItems(dt){
+
+    for(
+        let i=items.length-1;
+        i>=0;
+        i--
+    ){
+
+        const item=items[i];
+
+        item.vy+=.25;
+
+        item.y+=item.vy;
+
+        item.spin+=dt*3;
+
+        if(
+            item.y+
+            item.height>=
+            groundY()
+        ){
+
+            item.y=
+                groundY()-
+                item.height;
+
+            item.vy=0;
+        }
+
+        /*
+            Collect.
+        */
+
+        if(
+            player.x+
+            player.width>
+            item.x &&
+
+            player.x<
+            item.x+
+            item.width &&
+
+            player.y+
+            player.height>
+            item.y &&
+
+            player.y<
+            item.y+
+            item.height
+        ){
+
+            player.item=
+                item.type;
+
+            floatingText(
+                player.x,
+                player.y,
+                itemName(item.type)
+            );
+
+            particlesBurst(
+                item.x,
+                item.y,
+                16
+            );
+
+            items.splice(i,1);
+
+            continue;
+        }
+
+        item.life-=dt;
+
+        if(item.life<=0)
+            items.splice(i,1);
+    }
+}
+
+function itemName(type){
+
+    const names={
+
+        rocket:"ROCKET",
+
+        bomb:"BOX BOMB",
+
+        board:"BOARD",
+
+        magnet:"MAGNET",
+
+        shield:"SHIELD",
+
+        bounce:"BOUNCE",
+
+        vacuum:"VACUUM"
+    };
+
+    return names[type];
+}
+
+
+/* =========================================================
+   USE ITEM
+   ========================================================= */
+
+function useItem(){
+
+    if(!player.item)
+        return;
+
+    const item=
+        player.item;
+
+    player.item=null;
+
+    /*
+        ROCKET
+    */
+
+    if(item==="rocket"){
+
+        rockets.push({
+
+            x:
+                player.x+
+                player.width,
+
+            y:
+                player.y+
+                player.height/2,
+
+            vx:
+                player.vx+
+                11,
+
+            vy:0,
+
+            life:3
+        });
+    }
+
+    /*
+        BOMB
+    */
+
+    if(item==="bomb"){
+
+        const x=
+            player.x+
+            player.width/2;
+
+        const y=
+            player.y+
+            player.height/2;
+
+        shake=12;
+
+        for(
+            let i=boxes.length-1;
+            i>=0;
+            i--
+        ){
+
+            const b=boxes[i];
+
+            const dx=
+                b.x+
+                b.width/2-
+                x;
+
+            const dy=
+                b.y+
+                b.height/2-
+                y;
+
+            const distance=
+                Math.hypot(dx,dy);
+
+            if(distance<125){
+
+                if(distance<75){
+
+                    breakBox(i);
+
+                }else{
+
+                    b.vx+=
+                        dx/
+                        (distance||1)*
+                        6;
+
+                    b.vy-=5;
+                }
+            }
+        }
+
+        particlesBurst(
+            x,
+            y,
+            35
+        );
+    }
+
+    /*
+        BOARD
+    */
+
+    if(item==="board"){
+
+        boards.push({
+
+            x:
+                player.x-35,
+
+            y:
+                player.y+
+                player.height+
+                5,
+
+            width:110,
+
+            height:13,
+
+            life:20
+        });
+    }
+
+    /*
+        MAGNET
+    */
+
+    if(item==="magnet"){
+
+        for(const item of items){
+
+            const dx=
+                player.x-
+                item.x;
+
+            const dy=
+                player.y-
+                item.y;
+
+            item.x+=dx*.35;
+            item.y+=dy*.35;
+        }
+    }
+
+    /*
+        SHIELD
+    */
+
+    if(item==="shield"){
+
+        player.shieldTime=8;
+    }
+
+    /*
+        BOUNCE
+    */
+
+    if(item==="bounce"){
+
+        player.vy=-22;
+
+        particlesBurst(
+            player.x+
+            player.width/2,
+            player.y+
+            player.height,
+            20
+        );
+    }
+
+    /*
+        VACUUM
+    */
+
+    if(item==="vacuum"){
+
+        for(
+            let i=boxes.length-1;
+            i>=0;
+            i--
+        ){
+
+            const b=boxes[i];
+
+            const d=
+                Math.hypot(
+                    b.x-player.x,
+                    b.y-player.y
+                );
+
+            if(d<180)
+                breakBox(i);
+        }
+    }
+}
+
+
+/* =========================================================
+   ROCKETS
+   ========================================================= */
+
+function updateRockets(dt){
+
+    for(
+        let i=rockets.length-1;
+        i>=0;
+        i--
+    ){
+
+        const r=rockets[i];
+
+        r.x+=r.vx;
+
+        r.y+=r.vy;
+
+        r.life-=dt;
+
+        let hit=false;
+
+        for(
+            let j=boxes.length-1;
+            j>=0;
+            j--
+        ){
+
+            const b=boxes[j];
+
+            if(
+                r.x>b.x &&
+                r.x<
+                b.x+b.width &&
+
+                r.y>b.y &&
+                r.y<
+                b.y+b.height
+            ){
+
+                /*
+                    Explosion around rocket.
+                */
+
+                for(
+                    let k=boxes.length-1;
+                    k>=0;
+                    k--
+                ){
+
+                    const q=boxes[k];
+
+                    const d=
+                        Math.hypot(
+                            q.x-r.x,
+                            q.y-r.y
+                        );
+
+                    if(d<80){
+
+                        if(d<55)
+                            breakBox(k);
+
+                        else{
+
+                            q.vx+=
+                                (q.x-r.x)/
+                                80*5;
+
+                            q.vy-=5;
+                        }
+                    }
+                }
+
+                particlesBurst(
+                    r.x,
+                    r.y,
+                    25
+                );
+
+                shake=9;
+
+                hit=true;
+
+                break;
+            }
+        }
+
+        if(
+            hit ||
+            r.life<=0 ||
+            r.x>W+150
+        ){
+
+            rockets.splice(i,1);
+        }
+    }
+}
+
+
+/* =========================================================
+   CARS
+   ========================================================= */
+
+function spawnCar(){
+
+    const fromLeft=
+        Math.random()<.5;
+
+    cars.push({
+
+        x:
+            fromLeft
+            ?-170
+            :W+170,
+
+        y:
+            groundY()-46,
+
+        width:140,
+
+        height:46,
+
+        vx:
+            (fromLeft?1:-1)*
+            (5+
+            Math.random()*2.5)
+    });
+}
+
+function updateCars(dt){
+
+    for(
+        let i=cars.length-1;
+        i>=0;
+        i--
+    ){
+
+        const c=cars[i];
+
+        c.x+=c.vx;
+
+        if(
+            c.x<
+            -300 ||
+
+            c.x>
+            W+300
+        ){
+
+            cars.splice(i,1);
+        }
+    }
+}
+
+
+/* =========================================================
+   EVENTS
+   ========================================================= */
+
+const events=[
+
+    "BOX RAIN",
+
+    "TRAFFIC JAM",
+
+    "MEGA BOX",
+
+    "LOW GRAVITY",
+
+    "HIGH BOUNCE"
+];
+
+function startEvent(){
+
+    activeEvent=
+        events[
+            Math.floor(
+                Math.random()*
+                events.length
+            )
+        ];
+
+    eventTime=7;
+
+    if(activeEvent==="TRAFFIC JAM"){
+
+        for(let i=0;i<5;i++){
+
+            setTimeout(
+                ()=>{
+                    if(state==="game")
+                        spawnCar();
+                },
+                i*650
+            );
+        }
+    }
+
+    if(activeEvent==="MEGA BOX"){
+
+        /*
+            Still same-size boxes.
+            "Mega box" means several boxes
+            arriving quickly instead of
+            changing the box size.
+        */
+
+        for(let i=0;i<5;i++){
+
+            setTimeout(
+                ()=>{
+                    if(state==="game")
+                        createWarning();
+                },
+                i*180
+            );
+        }
+    }
+}
+
+
+/* =========================================================
+   PARTICLES
+   ========================================================= */
+
+function particlesBurst(x,y,count){
+
+    for(let i=0;i<count;i++){
+
+        particles.push({
+
+            x:x,
+
+            y:y,
+
+            vx:
+                (Math.random()-.5)*
+                8,
+
+            vy:
+                (Math.random()-.5)*
+                8,
+
+            size:
+                2+
+                Math.random()*5,
+
+            life:
+                .35+
+                Math.random()*.55
+        });
+    }
+}
+
+function dust(x,y){
+
+    for(let i=0;i<7;i++){
+
+        particles.push({
+
+            x:x,
+
+            y:y,
+
+            vx:
+                (Math.random()-.5)*4,
+
+            vy:
+                -Math.random()*2,
+
+            size:
+                3+
+                Math.random()*3,
+
+            life:.35
+        });
+    }
+}
+
+function updateParticles(dt){
+
+    for(
+        let i=particles.length-1;
+        i>=0;
+        i--
+    ){
+
+        const p=particles[i];
+
+        p.x+=p.vx;
+        p.y+=p.vy;
+
+        p.vy+=.14;
+
+        p.vx*=.98;
+
+        p.life-=dt;
+
+        if(p.life<=0)
+            particles.splice(i,1);
+    }
+}
+
+
+/* =========================================================
+   FLOATING TEXT
+   ========================================================= */
+
+function floatingText(x,y,text){
+
+    texts.push({
+
+        x:x,
+
+        y:y,
+
+        text:text,
+
+        life:1,
+
+        vy:-35
+    });
+}
+
+function updateTexts(dt){
+
+    for(
+        let i=texts.length-1;
+        i>=0;
+        i--
+    ){
+
+        const t=texts[i];
+
+        t.y+=t.vy*dt;
+
+        t.life-=dt;
+
+        if(t.life<=0)
+            texts.splice(i,1);
+    }
+}
+
+
+/* =========================================================
+   GAME UPDATE
+   ========================================================= */
+
+function update(dt){
+
+    if(state!=="game")
+        return;
+
+    time+=dt;
+
+    /*
+        Combo.
+    */
+
+    if(comboTimer>0){
+
+        comboTimer-=dt;
+
+    }else{
+
+        combo=0;
+    }
+
+    /*
+        Warning spawning.
+
+        A warning appears FIRST.
+        Then the box actually falls.
+    */
+
+    boxSpawnTimer-=dt;
+
+    const spawnRate=
+        Math.max(
+            .32,
+            1.05-
+            time*.004
+        );
+
+    if(boxSpawnTimer<=0){
+
+        boxSpawnTimer=
+            activeEvent==="BOX RAIN"
+            ?spawnRate*.35
+            :spawnRate;
+
+        createWarning();
+    }
+
+    /*
+        Cars.
+    */
+
+    carSpawnTimer-=dt;
+
+    if(carSpawnTimer<=0){
+
+        spawnCar();
+
+        carSpawnTimer=
+            Math.max(
+                2.7,
+                6.2-
+                time*.01
+            );
+    }
+
+    /*
+        Events.
+    */
+
+    eventTimer-=dt;
+
+    if(eventTimer<=0){
+
+        startEvent();
+
+        eventTimer=
+            18+
+            Math.random()*8;
+    }
+
+    if(eventTime>0){
+
+        eventTime-=dt;
+
+        if(eventTime<=0)
+            activeEvent="";
+    }
+
+    updateWarnings(dt);
+    updatePlayer(dt);
+    updateBoxes(dt);
+    updateItems(dt);
+    updateRockets(dt);
+    updateCars(dt);
+    updateParticles(dt);
+    updateTexts(dt);
+    updateBoards(dt);
+    updateCamera();
+}
+
+
+/* =========================================================
+   BOARDS
+   ========================================================= */
+
+function updateBoards(dt){
+
+    for(
+        let i=boards.length-1;
+        i>=0;
+        i--
+    ){
+
+        boards[i].life-=dt;
+
+        if(boards[i].life<=0)
+            boards.splice(i,1);
+    }
+}
+
+
+/* =========================================================
+   CAMERA
+   ========================================================= */
+
+function pileHeight(){
+
+    let highest=
+        groundY();
+
+    for(const b of boxes){
+
+        highest=
+            Math.min(
+                highest,
+                b.y
+            );
+    }
+
+    return Math.max(
+        0,
+        groundY()-highest
+    );
+}
+
+function updateCamera(){
+
+    cameraTarget=
+        Math.max(
+            0,
+            pileHeight()-
+            H*.35
+        );
+
+    cameraY+=
+        (cameraTarget-cameraY)*
+        .055;
+
+    if(cameraY<0)
+        cameraY=0;
+}
+
+
+/* =========================================================
+   DRAW HELPERS
+   ========================================================= */
+
+function text(
+    value,
+    x,
+    y,
+    size,
+    color="#fff",
+    align="center",
+    weight="700"
+){
+
+    ctx.font=
+        `${weight} ${size}px Arial`;
+
+    ctx.textAlign=align;
+    ctx.textBaseline="middle";
+
+    ctx.fillStyle=color;
+
+    ctx.fillText(
+        value,
+        x,
+        y
+    );
+}
+
+
+/* =========================================================
+   BACKGROUND
+   ========================================================= */
+
+function drawBackground(){
+
+    const sky=
+        ctx.createLinearGradient(
+            0,0,0,H
+        );
+
+    sky.addColorStop(
+        0,
+        "#64bddd"
+    );
+
+    sky.addColorStop(
+        1,
+        "#e8c98d"
+    );
+
+    ctx.fillStyle=sky;
+
+    ctx.fillRect(
+        0,0,W,H
+    );
+
+    /*
+        Sun.
+    */
+
+    ctx.fillStyle=
+        "rgba(255,240,160,.8)";
+
+    ctx.beginPath();
+
+    ctx.arc(
+        W*.78,
+        100,
+        45,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+    /*
+        Background buildings.
+    */
+
+    const skyline=
+        groundY()-
+        85-
+        cameraY*.04;
+
+    for(
+        let x=0;
+        x<W+100;
+        x+=65
+    ){
+
+        const h=
+            50+
+            ((x*19)%75);
+
+        ctx.fillStyle=
+            "rgba(63,91,108,.30)";
+
+        ctx.fillRect(
+            x,
+            skyline-h,
+            55,
+            h
+        );
+
+        ctx.fillStyle=
+            "rgba(255,225,125,.35)";
+
+        for(
+            let y=skyline-h+12;
+            y<skyline-8;
+            y+=18
+        ){
+
+            ctx.fillRect(
+                x+9,
+                y,
+                7,
+                7
+            );
+
+            ctx.fillRect(
+                x+29,
+                y,
+                7,
+                7
+            );
+        }
+    }
+
+    /*
+        Clouds.
+    */
+
+    for(let i=0;i<5;i++){
+
+        const x=
+            (
+                i*280-
+                time*12
+            )%
+            (W+350)-180;
+
+        const y=
+            60+
+            (i%3)*70;
+
+        ctx.fillStyle=
+            "rgba(255,255,255,.48)";
+
+        ctx.beginPath();
+
+        ctx.arc(
+            x,
+            y,
+            23,
+            0,
+            Math.PI*2
+        );
+
+        ctx.arc(
+            x+30,
+            y-10,
+            29,
+            0,
+            Math.PI*2
+        );
+
+        ctx.arc(
+            x+62,
+            y,
+            22,
+            0,
+            Math.PI*2
+        );
+
+        ctx.fill();
+    }
+
+    /*
+        Street.
+    */
+
+    const gy=groundY();
+
+    ctx.fillStyle="#aaa18e";
+
+    ctx.fillRect(
+        0,
+        gy-18,
+        W,
+        18
+    );
+
+    ctx.fillStyle="#363a40";
+
+    ctx.fillRect(
+        0,
+        gy,
+        W,
+        H-gy
+    );
+
+    ctx.fillStyle="#25292f";
+
+    ctx.fillRect(
+        0,
+        gy,
+        W,
+        7
+    );
+
+    /*
+        Road lines.
+    */
+
+    const offset=
+        -(time*100)%125;
+
+    ctx.fillStyle="#d8c76b";
+
+    for(
+        let x=offset;
+        x<W;
+        x+=125
+    ){
+
+        ctx.fillRect(
+            x,
+            gy+53,
+            65,
+            5
+        );
+    }
+
+    /*
+        Curb.
+    */
+
+    for(
+        let x=0;
+        x<W;
+        x+=35
+    ){
+
+        ctx.fillStyle=
+            Math.floor(x/35)%2
+            ?"rgba(255,255,255,.55)"
+            :"rgba(213,79,68,.7)";
+
+        ctx.fillRect(
+            x,
+            gy-5,
+            35,
+            5
+        );
+    }
+}
+
+
+/* =========================================================
+   WARNING DRAW
+   ========================================================= */
+
+function drawWarnings(){
+
+    for(const w of warnings){
+
+        const progress=
+            1-
+            w.timer/
+            w.maxTime;
+
+        const y=
+            groundY()-
+            BOX_SIZE-
+            cameraY;
+
+        const pulse=
+            .65+
+            Math.sin(
+                time*15
+            )*.25;
+
+        /*
+            Warning shadow.
+        */
+
+        ctx.globalAlpha=
+            pulse;
+
+        ctx.strokeStyle="#e8493f";
+
+        ctx.lineWidth=3;
+
+        ctx.setLineDash([6,5]);
+
+        ctx.strokeRect(
+            w.x,
+            y,
+            BOX_SIZE,
+            BOX_SIZE
+        );
+
+        ctx.setLineDash([]);
+
+        /*
+            Cross.
+        */
+
+        ctx.strokeStyle="#e8493f";
+
+        ctx.lineWidth=4;
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+            w.x+10,
+            y+10
+        );
+
+        ctx.lineTo(
+            w.x+BOX_SIZE-10,
+            y+BOX_SIZE-10
+        );
+
+        ctx.moveTo(
+            w.x+BOX_SIZE-10,
+            y+10
+        );
+
+        ctx.lineTo(
+            w.x+10,
+            y+BOX_SIZE-10
+        );
+
+        ctx.stroke();
+
+        /*
+            Falling indicator.
+        */
+
+        text(
+            "!",
+            w.x+
+            BOX_SIZE/2,
+            y-18,
+            18,
+            "#e8493f",
+            "center",
+            "900"
+        );
+
+        /*
+            Countdown bar.
+        */
+
+        ctx.fillStyle="#e8493f";
+
+        ctx.fillRect(
+            w.x,
+            y+
+            BOX_SIZE+
+            5,
+            BOX_SIZE*
+            progress,
+            4
+        );
+
+        ctx.globalAlpha=1;
+    }
+}
+
+
+/* =========================================================
+   BOX TEMPLATE
+   ========================================================= */
+
+function drawBox(box){
+
+    /*
+        THIS IS A TEMPLATE.
+
+        Replace this function later with
+        your own box image/sprite.
+
+        Box dimensions are always BOX_SIZE.
+        There is NO rotation.
+    */
+
+    const x=box.x;
+    const y=box.y-cameraY;
+
+    /*
+        Shadow.
+    */
+
+    ctx.fillStyle=
+        "rgba(0,0,0,.20)";
+
+    ctx.fillRect(
+        x+4,
+        y+
+        BOX_SIZE-1,
+        BOX_SIZE-8,
+        6
+    );
+
+    /*
+        Main square.
+    */
+
+    ctx.fillStyle="#b97842";
+
+    ctx.fillRect(
+        x,
+        y,
+        BOX_SIZE,
+        BOX_SIZE
+    );
+
+    /*
+        Border.
+    */
+
+    ctx.strokeStyle="#653e28";
+
+    ctx.lineWidth=3;
+
+    ctx.strokeRect(
+        x,
+        y,
+        BOX_SIZE,
+        BOX_SIZE
+    );
+
+    /*
+        Tape.
+    */
+
+    ctx.fillStyle="#e4c177";
+
+    ctx.fillRect(
+        x+
+        BOX_SIZE/2-5,
+        y,
+        10,
+        BOX_SIZE
+    );
+
+    /*
+        Horizontal tape.
+    */
+
+    ctx.fillRect(
+        x,
+        y+
+        BOX_SIZE/2-4,
+        BOX_SIZE,
+        8
+    );
+
+    /*
+        Shipping label.
+    */
+
+    ctx.fillStyle="#f0dfb9";
+
+    ctx.fillRect(
+        x+9,
+        y+10,
+        18,
+        13
+    );
+
+    /*
+        Label lines.
+    */
+
+    ctx.fillStyle="#8c6c4c";
+
+    ctx.fillRect(
+        x+12,
+        y+13,
+        12,
+        2
+    );
+
+    ctx.fillRect(
+        x+12,
+        y+17,
+        9,
+        2
+    );
+}
+
+
+/* =========================================================
+   PLAYER TEMPLATE
+   ========================================================= */
+
+function drawPlayer(){
+
+    /*
+        Replace this entire function later
+        with your actual mailman sprite.
+    */
+
+    const x=
+        player.x+
+        player.width/2;
+
+    const y=
+        player.y-
+        cameraY+
+        player.height/2;
+
+    ctx.save();
+
+    ctx.translate(
+        x,
+        y
+    );
+
+    ctx.rotate(
+        player.angle
+    );
+
+    let sx=1;
+    let sy=1;
+
+    if(player.squash>0){
+
+        sx=1.13;
+        sy=.87;
+    }
+
+    ctx.scale(
+        sx,
+        sy
+    );
+
+    /*
+        Shadow.
+    */
+
+    ctx.fillStyle=
+        "rgba(0,0,0,.20)";
+
+    ctx.beginPath();
+
+    ctx.ellipse(
+        0,
+        26,
+        23,
+        6,
+        0,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+    /*
+        Mail bag.
+    */
+
+    ctx.fillStyle="#70442c";
+
+    ctx.fillRect(
+        -28,
+        -1,
+        11,
+        23
+    );
+
+    /*
+        Body.
+    */
+
+    ctx.fillStyle="#ef942d";
+
+    ctx.fillRect(
+        -19,
+        -17,
+        38,
+        38
+    );
+
+    ctx.strokeStyle="#603b22";
+
+    ctx.lineWidth=3;
+
+    ctx.strokeRect(
+        -19,
+        -17,
+        38,
+        38
+    );
+
+    /*
+        Collar.
+    */
+
+    ctx.fillStyle="#fff1d2";
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        -9,
+        -17
+    );
+
+    ctx.lineTo(
+        0,
+        -7
+    );
+
+    ctx.lineTo(
+        9,
+        -17
+    );
+
+    ctx.closePath();
+
+    ctx.fill();
+
+    /*
+        Hat.
+    */
+
+    ctx.fillStyle="#d74840";
+
+    ctx.fillRect(
+        -21,
+        -26,
+        42,
+        9
+    );
+
+    ctx.fillRect(
+        -10,
+        -34,
+        21,
+        9
+    );
+
+    /*
+        Hat badge.
+    */
+
+    ctx.fillStyle="#f2d37d";
+
+    ctx.fillRect(
+        -3,
+        -33,
+        7,
+        5
+    );
+
+    /*
+        Eyes.
+    */
+
+    ctx.fillStyle="#25272a";
+
+    ctx.fillRect(
+        -11,
+        -5,
+        6,
+        7
+    );
+
+    ctx.fillRect(
+        5,
+        -5,
+        6,
+        7
+    );
+
+    /*
+        Nose.
+    */
+
+    ctx.fillStyle="#cf742b";
+
+    ctx.fillRect(
+        -2,
+        2,
+        5,
+        5
+    );
+
+    /*
+        Smile.
+    */
+
+    ctx.strokeStyle="#38261c";
+
+    ctx.lineWidth=2;
+
+    ctx.beginPath();
+
+    ctx.arc(
+        0,
+        5,
+        7,
+        0,
+        Math.PI
+    );
+
+    ctx.stroke();
+
+    /*
+        Shoes.
+    */
+
+    ctx.fillStyle="#353039";
+
+    ctx.fillRect(
+        -17,
+        18,
+        12,
+        7
+    );
+
+    ctx.fillRect(
+        5,
+        18,
+        12,
+        7
+    );
+
+    /*
+        Shield.
+    */
+
+    if(player.shieldTime>0){
+
+        ctx.strokeStyle=
+            "rgba(75,205,245,.9)";
+
+        ctx.lineWidth=4;
+
+        ctx.beginPath();
+
+        ctx.arc(
+            0,
+            0,
+            31,
+            0,
+            Math.PI*2
+        );
+
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
+
+/* =========================================================
+   ITEM TEMPLATE
+   ========================================================= */
+
+function drawItem(item){
+
+    /*
+        Every item is deliberately a shape template.
+        Replace with your own image later.
+    */
+
+    const x=
+        item.x+
+        item.width/2;
+
+    const y=
+        item.y-
+        cameraY+
+        item.height/2;
+
+    ctx.save();
+
+    ctx.translate(
+        x,
+        y
+    );
+
+    ctx.rotate(
+        Math.sin(item.spin)*.12
+    );
+
+    /*
+        Outer pickup circle.
+    */
+
+    ctx.fillStyle="#202832";
+
+    ctx.beginPath();
+
+    ctx.arc(
+        0,
+        0,
+        19,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+    ctx.strokeStyle="#fff";
+
+    ctx.lineWidth=2;
+
+    ctx.stroke();
+
+    /*
+        Individual item template.
+    */
+
+    if(item.type==="rocket")
+        drawRocketIcon();
+
+    if(item.type==="bomb")
+        drawBombIcon();
+
+    if(item.type==="board")
+        drawBoardIcon();
+
+    if(item.type==="magnet")
+        drawMagnetIcon();
+
+    if(item.type==="shield")
+        drawShieldIcon();
+
+    if(item.type==="bounce")
+        drawBounceIcon();
+
+    if(item.type==="vacuum")
+        drawVacuumIcon();
+
+    ctx.restore();
+}
+
+
+/* =========================================================
+   ITEM ICON TEMPLATES
+   ========================================================= */
+
+function drawRocketIcon(){
+
+    ctx.fillStyle="#e55348";
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        12,
+        0
+    );
+
+    ctx.lineTo(
+        -8,
+        -7
+    );
+
+    ctx.lineTo(
+        -5,
+        0
+    );
+
+    ctx.lineTo(
+        -8,
+        7
+    );
+
+    ctx.closePath();
+
+    ctx.fill();
+
+    ctx.fillStyle="#ffd052";
+
+    ctx.fillRect(
+        -15,
+        -3,
+        9,
+        6
+    );
+}
+
+function drawBombIcon(){
+
+    ctx.fillStyle="#373c45";
+
+    ctx.beginPath();
+
+    ctx.arc(
+        0,
+        2,
+        9,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+    ctx.fillStyle="#d7d7d7";
+
+    ctx.fillRect(
+        4,
+        -11,
+        6,
+        4
+    );
+}
+
+function drawBoardIcon(){
+
+    ctx.fillStyle="#a66a3d";
+
+    ctx.fillRect(
+        -13,
+        -4,
+        26,
+        8
+    );
+
+    ctx.strokeStyle="#e2b174";
+
+    ctx.lineWidth=2;
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        -7,
+        -3
+    );
+
+    ctx.lineTo(
+        -7,
+        3
+    );
+
+    ctx.moveTo(
+        0,
+        -3
+    );
+
+    ctx.lineTo(
+        0,
+        3
+    );
+
+    ctx.stroke();
+}
+
+function drawMagnetIcon(){
+
+    ctx.strokeStyle="#e45b92";
+
+    ctx.lineWidth=5;
+
+    ctx.beginPath();
+
+    ctx.arc(
+        0,
+        0,
+        9,
+        0,
+        Math.PI
+    );
+
+    ctx.stroke();
+}
+
+function drawShieldIcon(){
+
+    ctx.fillStyle="#4dbce7";
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        0,
+        -11
+    );
+
+    ctx.lineTo(
+        10,
+        -6
+    );
+
+    ctx.lineTo(
+        7,
+        8
+    );
+
+    ctx.lineTo(
+        0,
+        12
+    );
+
+    ctx.lineTo(
+        -7,
+        8
+    );
+
+    ctx.lineTo(
+        -10,
+        -6
+    );
+
+    ctx.closePath();
+
+    ctx.fill();
+}
+
+function drawBounceIcon(){
+
+    ctx.strokeStyle="#65d391";
+
+    ctx.lineWidth=4;
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        -10,
+        7
+    );
+
+    ctx.lineTo(
+        0,
+        -8
+    );
+
+    ctx.lineTo(
+        10,
+        7
+    );
+
+    ctx.stroke();
+}
+
+function drawVacuumIcon(){
+
+    ctx.strokeStyle="#9a70dc";
+
+    ctx.lineWidth=4;
+
+    ctx.beginPath();
+
+    ctx.arc(
+        0,
+        0,
+        8,
+        0,
+        Math.PI*2
+    );
+
+    ctx.stroke();
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        6,
+        6
+    );
+
+    ctx.lineTo(
+        13,
+        13
+    );
+
+    ctx.stroke();
+}
+
+
+/* =========================================================
+   BOARD TEMPLATE
+   ========================================================= */
+
+function drawBoard(board){
+
+    const y=
+        board.y-
+        cameraY;
+
+    ctx.fillStyle="#9b6339";
+
+    ctx.fillRect(
+        board.x,
+        y,
+        board.width,
+        board.height
+    );
+
+    ctx.strokeStyle="#593a25";
+
+    ctx.lineWidth=3;
+
+    ctx.strokeRect(
+        board.x,
+        y,
+        board.width,
+        board.height
+    );
+
+    /*
+        Nails.
+    */
+
+    ctx.fillStyle="#d5b07b";
+
+    ctx.fillRect(
+        board.x+8,
+        y+3,
+        5,
+        5
+    );
+
+    ctx.fillRect(
+        board.x+
+        board.width-13,
+        y+3,
+        5,
+        5
+    );
+}
+
+
+/* =========================================================
+   CAR TEMPLATE
+   ========================================================= */
+
+function drawCar(car){
+
+    const y=car.y;
+
+    ctx.save();
+
+    ctx.translate(
+        car.x,
+        y
+    );
+
+    if(car.vx<0)
+        ctx.scale(-1,1);
+
+    /*
+        Shadow.
+    */
+
+    ctx.fillStyle=
+        "rgba(0,0,0,.2)";
+
+    ctx.beginPath();
+
+    ctx.ellipse(
+        car.width/2,
+        49,
+        53,
+        6,
+        0,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+    /*
+        Body.
+    */
+
+    ctx.fillStyle="#e0544c";
+
+    ctx.beginPath();
+
+    ctx.roundRect(
+        0,
+        12,
+        car.width,
+        29,
+        7
+    );
+
+    ctx.fill();
+
+    /*
+        Roof.
+    */
+
+    ctx.fillStyle="#bd3e3a";
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        25,
+        12
+    );
+
+    ctx.lineTo(
+        44,
+        1
+    );
+
+    ctx.lineTo(
+        94,
+        1
+    );
+
+    ctx.lineTo(
+        111,
+        12
+    );
+
+    ctx.closePath();
+
+    ctx.fill();
+
+    /*
+        Windows.
+    */
+
+    ctx.fillStyle="#a8d8e3";
+
+    ctx.fillRect(
+        48,
+        5,
+        19,
+        9
+    );
+
+    ctx.fillRect(
+        71,
+        5,
+        22,
+        9
+    );
+
+    /*
+        Wheels.
+    */
+
+    ctx.fillStyle="#202328";
+
+    ctx.beginPath();
+
+    ctx.arc(
+        28,
+        41,
+        10,
+        0,
+        Math.PI*2
+    );
+
+    ctx.arc(
+        car.width-28,
+        41,
+        10,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+    ctx.fillStyle="#858b92";
+
+    ctx.beginPath();
+
+    ctx.arc(
+        28,
+        41,
+        4,
+        0,
+        Math.PI*2
+    );
+
+    ctx.arc(
+        car.width-28,
+        41,
+        4,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+    /*
+        Headlight.
+    */
+
+    ctx.fillStyle="#ffe18b";
+
+    ctx.fillRect(
+        car.width-6,
+        20,
+        6,
+        7
+    );
+
+    ctx.restore();
+}
+
+
+/* =========================================================
+   ROCKET TEMPLATE
+   ========================================================= */
+
+function drawRocket(rocket){
+
+    const x=rocket.x;
+    const y=
+        rocket.y-
+        cameraY;
+
+    ctx.save();
+
+    ctx.translate(
+        x,
+        y
+    );
+
+    ctx.fillStyle="#df5148";
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        17,
+        0
+    );
+
+    ctx.lineTo(
+        -10,
+        -8
+    );
+
+    ctx.lineTo(
+        -7,
+        0
+    );
+
+    ctx.lineTo(
+        -10,
+        8
+    );
+
+    ctx.closePath();
+
+    ctx.fill();
+
+    ctx.fillStyle="#ffd052";
+
+    ctx.fillRect(
+        -18,
+        -3,
+        10,
+        6
+    );
+
+    ctx.restore();
+}
+
+
+/* =========================================================
+   PARTICLE DRAW
+   ========================================================= */
+
+function drawParticles(){
+
+    for(const p of particles){
+
+        ctx.globalAlpha=
+            Math.max(
+                0,
+                p.life
+            );
+
+        ctx.fillStyle="#e3b16e";
+
+        ctx.fillRect(
+            p.x,
+            p.y-
+            cameraY,
+            p.size,
+            p.size
+        );
+    }
+
+    ctx.globalAlpha=1;
+}
+
+
+/* =========================================================
+   FLOATING TEXT DRAW
+   ========================================================= */
+
+function drawTexts(){
+
+    for(const t of texts){
+
+        ctx.globalAlpha=
+            Math.max(
+                0,
+                t.life
+            );
+
+        text(
+            t.text,
+            t.x,
+            t.y-cameraY,
+            16,
+            "#fff",
+            "center",
+            "900"
+        );
+    }
+
+    ctx.globalAlpha=1;
+}
+
+
+/* =========================================================
+   HUD
+   ========================================================= */
+
+function drawHUD(){
+
+    /*
+        Score.
+    */
+
+    ctx.fillStyle=
+        "rgba(15,20,27,.84)";
+
+    ctx.beginPath();
+
+    ctx.roundRect(
+        15,
+        15,
+        190,
+        68,
+        14
+    );
+
+    ctx.fill();
+
+    text(
+        "SCORE",
+        30,
+        34,
+        11,
+        "#aeb9c5",
+        "left"
+    );
+
+    text(
+        score.toLocaleString(),
+        30,
+        61,
+        27,
+        "#fff",
+        "left",
+        "900"
+    );
+
+    /*
+        Combo.
+    */
+
+    if(combo>1){
+
+        text(
+            "x"+combo,
+            220,
+            48,
+            20,
+            "#ffda58",
+            "left",
+            "900"
+        );
+    }
+
+    /*
+        Height.
+    */
+
+    text(
+        "HEIGHT  "+
+        Math.floor(pileHeight()),
+        W/2,
+        28,
+        11,
+        "#34434d"
+    );
+
+    /*
+        Pause.
+    */
+
+    ctx.fillStyle=
+        "rgba(15,20,27,.84)";
+
+    ctx.beginPath();
+
+    ctx.roundRect(
+        W-61,
+        15,
+        45,
+        45,
+        12
+    );
+
+    ctx.fill();
+
+    text(
+        "Ⅱ",
+        W-38,
+        39,
+        18
+    );
+
+    /*
+        Event.
+    */
+
+    if(activeEvent){
+
+        text(
+            activeEvent,
+            W/2,
+            60,
+            15,
+            "#fff",
+            "center",
+            "900"
+        );
+    }
+
+    /*
+        Item button.
+    */
+
+    if(player.item){
+
+        const x=W-135;
+        const y=H-92;
+
+        ctx.fillStyle=
+            "rgba(15,20,27,.9)";
+
+        ctx.beginPath();
+
+        ctx.roundRect(
+            x,
+            y,
+            118,
+            70,
+            14
+        );
+
+        ctx.fill();
+
+        text(
+            itemName(
+                player.item
+            ),
+            x+59,
+            y+23,
+            10,
+            "#fff",
+            "center",
+            "900"
+        );
+
+        text(
+            "USE",
+            x+59,
+            y+49,
+            10,
+            "#ffda58",
+            "center",
+            "900"
+        );
+    }
+}
+
+
+/* =========================================================
+   MENU
+   ========================================================= */
+
+function drawMenu(){
+
+    drawBackground();
+
+    ctx.fillStyle=
+        "rgba(9,14,20,.18)";
+
+    ctx.fillRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+    /*
+        Studio.
+    */
+
+    text(
+        "TOONYTIME STUDIOS",
+        W/2,
+        H*.13,
+        14,
+        "#fff",
+        "center",
+        "900"
+    );
+
+    /*
+        Logo shadow.
+    */
+
+    ctx.fillStyle="#633d24";
+
+    ctx.beginPath();
+
+    ctx.roundRect(
+        W/2-220,
+        H*.21+8,
+        440,
+        88,
+        20
+    );
+
+    ctx.fill();
+
+    /*
+        Logo.
+    */
+
+    ctx.fillStyle="#ff9c32";
+
+    ctx.beginPath();
+
+    ctx.roundRect(
+        W/2-220,
+        H*.21,
+        440,
+        88,
+        20
+    );
+
+    ctx.fill();
+
+    text(
+        "BOX BOUNCE",
+        W/2,
+        H*.21+44,
+        Math.min(
+            52,
+            W*.115
+        ),
+        "#fff7dc",
+        "center",
+        "900"
+    );
+
+    text(
+        "STACK IT • BREAK IT • SURVIVE",
+        W/2,
+        H*.38,
+        13,
+        "#30404a",
+        "center",
+        "700"
+    );
+
+    /*
+        Play.
+    */
+
+    menuButton(
+        "PLAY",
+        H*.48,
+        "#ffd052"
+    );
+
+    /*
+        Stats.
+    */
+
+    text(
+        "BEST  "+
+        saveData.highScore.toLocaleString(),
+        W/2,
+        H*.65,
+        15,
+        "#293740"
+    );
+
+    text(
+        "BOXES BROKEN  "+
+        saveData.boxesBroken.toLocaleString(),
+        W/2,
+        H*.69,
+        11,
+        "#53616a",
+        "center",
+        "600"
+    );
+
+    /*
+        Info button.
+    */
+
+    ctx.fillStyle=
+        "rgba(20,27,34,.82)";
+
+    ctx.beginPath();
+
+    ctx.arc(
+        W-43,
+        43,
+        27,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+    text(
+        "i",
+        W-43,
+        43,
+        20
+    );
+
+    /*
+        Controls.
+    */
+
+    text(
+        "A / D  •  ARROWS     SPACE  •  JUMP",
+        W/2,
+        H*.82,
+        11,
+        "#53616a",
+        "center",
+        "600"
+    );
+
+    text(
+        "LOCAL SAVE ENABLED",
+        W/2,
+        H*.88,
+        10,
+        "#65747d",
+        "center",
+        "600"
+    );
+}
+
+
+/* =========================================================
+   MENU BUTTON
+   ========================================================= */
+
+function menuButton(
+    label,
+    y,
+    color="#ffd052"
+){
+
+    ctx.fillStyle=
+        "#1d252e";
+
+    ctx.beginPath();
+
+    ctx.roundRect(
+        W/2-150,
+        y+5,
+        300,
+        65,
+        17
+    );
+
+    ctx.fill();
+
+    ctx.fillStyle=color;
+
+    ctx.beginPath();
+
+    ctx.roundRect(
+        W/2-150,
+        y,
+        300,
+        65,
+        17
+    );
+
+    ctx.fill();
+
+    text(
+        label,
+        W/2,
+        y+32,
+        21,
+        color===
+        "#ffd052"
+        ?"33220e"
+        :"#fff",
+        "center",
+        "900"
+    );
+}
+
+
+/* =========================================================
+   OVERLAY
+   ========================================================= */
+
+function overlay(){
+
+    ctx.fillStyle=
+        "rgba(7,11,16,.68)";
+
+    ctx.fillRect(
+        0,
+        0,
+        W,
+        H
+    );
+}
+
+
+/* =========================================================
+   PAUSE
+   ========================================================= */
+
+function drawPause(){
+
+    drawGame();
+
+    overlay();
+
+    text(
+        "PAUSED",
+        W/2,
+        H*.32,
+        43,
+        "#fff",
+        "center",
+        "900"
+    );
+
+    menuButton(
+        "RESUME",
+        H*.45
+    );
+
+    menuButton(
+        "HOME",
+        H*.45+80,
+        "#303944"
+    );
+}
+
+
+/* =========================================================
+   GAME OVER
+   ========================================================= */
+
+function drawGameOver(){
+
+    drawGame();
+
+    overlay();
+
+    text(
+        "MAIL LOST",
+        W/2,
+        H*.26,
+        42,
+        "#ff6b5d",
+        "center",
+        "900"
+    );
+
+    text(
+        score.toLocaleString(),
+        W/2,
+        H*.39,
+        55,
+        "#fff",
+        "center",
+        "900"
+    );
+
+    text(
+        "FINAL SCORE",
+        W/2,
+        H*.46,
+        11,
+        "#aeb9c5"
+    );
+
+    if(
+        score>=
+        saveData.highScore
+    ){
+
+        text(
+            "NEW HIGH SCORE!",
+            W/2,
+            H*.52,
+            15,
+            "#ffda58",
+            "center",
+            "900"
+        );
+    }
+
+    menuButton(
+        "PLAY AGAIN",
+        H*.60
+    );
+
+    menuButton(
+        "HOME",
+        H*.60+82,
+        "#303944"
+    );
+}
+
+
+/* =========================================================
+   INFO
+   ========================================================= */
+
+function drawInfo(){
+
+    drawBackground();
+
+    overlay();
+
+    text(
+        "TOONYTIME STUDIOS",
+        W/2,
+        70,
+        30,
+        "#fff",
+        "center",
+        "900"
+    );
+
+    text(
+        "BOX BOUNCE",
+        W/2,
+        108,
+        14,
+        "#ffd052"
+    );
+
+    const lines=[
+
+        "YOU ARE THE MAILMAN.",
+
+        "Boxes fall from the sky.",
+
+        "Watch the warning marker",
+
+        "and get out of the way.",
+
+        "",
+
+        "Jump on the pile to climb.",
+
+        "Tap boxes to break them.",
+
+        "",
+
+        "Random boxes can contain tools:",
+
+        "ROCKET • BOMB • BOARD",
+
+        "MAGNET • SHIELD • BOUNCE",
+
+        "VACUUM",
+
+        "",
+
+        "Use the pile to dodge cars.",
+
+        "Don't get crushed.",
+
+        "",
+
+        "How high can you stack?"
+    ];
+
+    let y=155;
+
+    for(const line of lines){
+
+        text(
+            line,
+            W/2,
+            y,
+            13,
+            line===""
+            ?"transparent"
+            :"#dce5eb",
+            "center",
+            "600"
+        );
+
+        y+=24;
+    }
+
+    menuButton(
+        "BACK",
+        H-80,
+        "#303944"
+    );
+}
+
+
+/* =========================================================
+   DRAW GAME
+   ========================================================= */
+
+function drawGame(){
+
+    drawBackground();
+
+    ctx.save();
+
+    let sx=0;
+    let sy=0;
+
+    if(shake>0){
+
+        sx=
+            (Math.random()-.5)*
+            shake;
+
+        sy=
+            (Math.random()-.5)*
+            shake;
+    }
+
+    ctx.translate(
+        sx,
+        sy
+    );
+
+    /*
+        Warning indicators.
+    */
+
+    drawWarnings();
+
+    /*
+        Boards.
+    */
+
+    for(const board of boards)
+        drawBoard(board);
+
+    /*
+        Boxes.
+    */
+
+    for(const box of boxes)
+        drawBox(box);
+
+    /*
+        Items.
+    */
+
+    for(const item of items)
+        drawItem(item);
+
+    /*
+        Cars.
+    */
+
+    for(const car of cars)
+        drawCar(car);
+
+    /*
+        Rockets.
+    */
+
+    for(const rocket of rockets)
+        drawRocket(rocket);
+
+    /*
+        Player.
+    */
+
+    drawPlayer();
+
+    /*
+        Particles.
+    */
+
+    drawParticles();
+
+    /*
+        Text.
+    */
+
+    drawTexts();
+
+    ctx.restore();
+
+    drawHUD();
+}
+
+
+/* =========================================================
+   GAME LOOP
+   ========================================================= */
+
+let last=
+    performance.now();
+
+function loop(now){
+
+    const dt=
+        Math.min(
+            .033,
+            (now-last)/1000
+        );
+
+    last=now;
+
+    update(dt);
+
+    ctx.clearRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+    if(state==="menu")
+        drawMenu();
+
+    else if(state==="game")
+        drawGame();
+
+    else if(state==="pause")
+        drawPause();
+
+    else if(state==="gameover")
+        drawGameOver();
+
+    else if(state==="info")
+        drawInfo();
+
+    requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+
+</script>
+
+</body>
+</html>
