@@ -1,0 +1,1803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Box Bounce</title>
+
+<style>
+* {
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #111;
+    font-family: Arial, sans-serif;
+}
+
+body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#game {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    max-width: 1400px;
+    overflow: hidden;
+    background:
+        linear-gradient(#8fd3ff 0%, #cceeff 65%, #e9f7ff 100%);
+}
+
+canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,.68);
+    color: white;
+    z-index: 20;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.title {
+    font-size: clamp(48px, 10vw, 100px);
+    font-weight: 900;
+    letter-spacing: 5px;
+    color: #ffcf4a;
+    text-shadow:
+        6px 6px 0 #8a4d18,
+        0 0 25px rgba(255,255,255,.3);
+}
+
+.subtitle {
+    margin-top: -8px;
+    font-size: 18px;
+    color: #ddd;
+}
+
+button {
+    border: 0;
+    border-radius: 12px;
+    padding: 15px 32px;
+    margin: 8px;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    background: #ffcf4a;
+    color: #222;
+    box-shadow: 0 5px 0 #9c721c;
+}
+
+button:active {
+    transform: translateY(4px);
+    box-shadow: 0 1px 0 #9c721c;
+}
+
+#hud {
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    z-index: 10;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.hudBox {
+    background: rgba(0,0,0,.65);
+    color: white;
+    padding: 9px 13px;
+    border-radius: 10px;
+    font-weight: bold;
+}
+
+#itemBar {
+    position: absolute;
+    bottom: 15px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    gap: 7px;
+    background: rgba(0,0,0,.65);
+    padding: 8px;
+    border-radius: 12px;
+}
+
+.itemSlot {
+    width: 70px;
+    height: 65px;
+    border: 2px solid rgba(255,255,255,.3);
+    border-radius: 9px;
+    color: white;
+    text-align: center;
+    padding-top: 6px;
+    font-size: 11px;
+}
+
+.itemIcon {
+    font-size: 25px;
+}
+
+#breakUI {
+    position: absolute;
+    left: 50%;
+    bottom: 105px;
+    transform: translateX(-50%);
+    z-index: 12;
+    width: min(360px, 70vw);
+    text-align: center;
+    color: white;
+    font-weight: bold;
+    pointer-events: none;
+}
+
+#breakBar {
+    width: 100%;
+    height: 15px;
+    background: rgba(0,0,0,.65);
+    border: 2px solid white;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 6px;
+}
+
+#breakFill {
+    height: 100%;
+    width: 0%;
+    background: #ffcf4a;
+}
+
+#warning {
+    position: absolute;
+    top: 85px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 11;
+    color: #ff3838;
+    font-size: 25px;
+    font-weight: 900;
+    text-shadow: 2px 2px white;
+    pointer-events: none;
+}
+
+#controls {
+    position: absolute;
+    bottom: 15px;
+    right: 15px;
+    z-index: 10;
+    display: flex;
+    gap: 8px;
+}
+
+.control {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: rgba(0,0,0,.55);
+    color: white;
+    border: 2px solid rgba(255,255,255,.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 25px;
+    font-weight: bold;
+}
+
+.info {
+    max-width: 600px;
+    text-align: center;
+    line-height: 1.6;
+    padding: 20px;
+    color: #ddd;
+}
+</style>
+</head>
+
+<body>
+
+<div id="game">
+
+<canvas id="canvas"></canvas>
+
+<div id="hud" class="hidden">
+    <div class="hudBox">Score: <span id="score">0</span></div>
+    <div class="hudBox">Best: <span id="best">0</span></div>
+    <div class="hudBox">Boxes: <span id="boxCount">0</span></div>
+    <div class="hudBox">Item: <span id="currentItem">None</span></div>
+</div>
+
+<div id="warning" class="hidden">⚠ BOX INCOMING!</div>
+
+<div id="breakUI" class="hidden">
+    HOLD E TO BREAK
+    <div id="breakBar">
+        <div id="breakFill"></div>
+    </div>
+</div>
+
+<div id="itemBar" class="hidden">
+    <div class="itemSlot">
+        <div class="itemIcon">🚀</div>
+        ROCKET
+    </div>
+    <div class="itemSlot">
+        <div class="itemIcon">💣</div>
+        BOMB
+    </div>
+    <div class="itemSlot">
+        <div class="itemIcon">🪵</div>
+        BOARD
+    </div>
+    <div class="itemSlot">
+        <div class="itemIcon">🛡️</div>
+        SHIELD
+    </div>
+    <div class="itemSlot">
+        <div class="itemIcon">⬆️</div>
+        BOUNCE
+    </div>
+</div>
+
+<div id="controls" class="hidden">
+    <div class="control" id="leftBtn">←</div>
+    <div class="control" id="rightBtn">→</div>
+    <div class="control" id="jumpBtn">↑</div>
+    <div class="control" id="useBtn">E</div>
+</div>
+
+<!-- HOME -->
+<div id="home" class="screen">
+    <div class="title">BOX BOUNCE</div>
+    <div class="subtitle">Deliver. Break. Survive.</div>
+
+    <br>
+
+    <button onclick="startGame()">START</button>
+    <button onclick="showInfo()">HOW TO PLAY</button>
+</div>
+
+<!-- INFO -->
+<div id="infoScreen" class="screen hidden">
+    <h1>HOW TO PLAY</h1>
+
+    <div class="info">
+        <p>📦 Boxes fall from the sky and build a stack.</p>
+        <p>⬆️ Jump onto boxes to reach higher areas.</p>
+        <p>🧱 Boxes are solid walls from the sides.</p>
+        <p>🔨 Stand near a box and <b>HOLD E for 5 seconds</b> to break it.</p>
+        <p>⚠️ New boxes need 5 seconds to unpack before they can be broken.</p>
+        <p>🚗 Survive the cars that drive through the level.</p>
+        <p>🎁 Breaking boxes can give you special items.</p>
+        <p>💣 Bombs destroy nearby boxes.</p>
+        <p>🚀 Rockets destroy a box from a distance.</p>
+        <p>🪵 Boards create temporary platforms.</p>
+    </div>
+
+    <button onclick="hideInfo()">BACK</button>
+</div>
+
+<!-- GAME OVER -->
+<div id="gameOver" class="screen hidden">
+    <h1>GAME OVER</h1>
+    <h2>Score: <span id="finalScore">0</span></h2>
+    <h3>Best: <span id="finalBest">0</span></h3>
+
+    <button onclick="startGame()">TRY AGAIN</button>
+    <button onclick="goHome()">HOME</button>
+</div>
+
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+let W = 0;
+let H = 0;
+
+function resize() {
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+/* =========================
+   GAME SETTINGS
+========================= */
+
+const GRID = 70;
+const BOX_SIZE = GRID;
+
+const GRAVITY = 1700;
+const MOVE_SPEED = 430;
+const JUMP_POWER = 720;
+
+const UNPACK_TIME = 5;
+const BREAK_TIME = 5;
+
+const MAX_ROWS = 7;
+
+let groundY = 0;
+
+/* =========================
+   GAME STATE
+========================= */
+
+let gameRunning = false;
+let paused = false;
+
+let score = 0;
+let best = Number(localStorage.getItem("boxBounceBest") || 0);
+
+let gameTime = 0;
+let spawnTimer = 0;
+let carTimer = 0;
+
+let boxes = [];
+let cars = [];
+let particles = [];
+let items = [];
+
+let currentItem = null;
+
+let breakTarget = null;
+let breakProgress = 0;
+
+let keys = {};
+
+let touchLeft = false;
+let touchRight = false;
+
+/* =========================
+   PLAYER
+========================= */
+
+const player = {
+    x: 200,
+    y: 0,
+    w: 48,
+    h: 48,
+
+    vx: 0,
+    vy: 0,
+
+    grounded: false,
+    facing: 1,
+
+    angle: 0,
+
+    shield: false,
+    bouncePower: false
+};
+
+/* =========================
+   UI
+========================= */
+
+const hud = document.getElementById("hud");
+const itemBar = document.getElementById("itemBar");
+const controls = document.getElementById("controls");
+
+document.getElementById("best").textContent = best;
+
+/* =========================
+   HOME / SCREENS
+========================= */
+
+function startGame() {
+
+    document.getElementById("home").classList.add("hidden");
+    document.getElementById("gameOver").classList.add("hidden");
+    document.getElementById("infoScreen").classList.add("hidden");
+
+    hud.classList.remove("hidden");
+    itemBar.classList.remove("hidden");
+    controls.classList.remove("hidden");
+
+    groundY = H - 100;
+
+    score = 0;
+    gameTime = 0;
+    spawnTimer = 1.5;
+    carTimer = 5;
+
+    boxes = [];
+    cars = [];
+    particles = [];
+    items = [];
+
+    currentItem = null;
+
+    breakTarget = null;
+    breakProgress = 0;
+
+    player.x = W / 2 - player.w / 2;
+    player.y = groundY - player.h;
+    player.vx = 0;
+    player.vy = 0;
+    player.grounded = true;
+    player.facing = 1;
+    player.shield = false;
+    player.bouncePower = false;
+
+    createStartingBoxes();
+
+    gameRunning = true;
+    paused = false;
+
+    updateUI();
+
+    requestAnimationFrame(loop);
+}
+
+function goHome() {
+    gameRunning = false;
+
+    document.getElementById("gameOver").classList.add("hidden");
+    document.getElementById("infoScreen").classList.add("hidden");
+    document.getElementById("home").classList.remove("hidden");
+
+    hud.classList.add("hidden");
+    itemBar.classList.add("hidden");
+    controls.classList.add("hidden");
+    document.getElementById("breakUI").classList.add("hidden");
+}
+
+function showInfo() {
+    document.getElementById("home").classList.add("hidden");
+    document.getElementById("infoScreen").classList.remove("hidden");
+}
+
+function hideInfo() {
+    document.getElementById("infoScreen").classList.add("hidden");
+    document.getElementById("home").classList.remove("hidden");
+}
+
+/* =========================
+   BOXES
+========================= */
+
+function rowY(row) {
+    return groundY - BOX_SIZE * (row + 1);
+}
+
+function createStartingBoxes() {
+
+    const startRows = 2;
+
+    for (let row = 0; row < startRows; row++) {
+
+        for (let col = 0; col < Math.floor(W / GRID); col++) {
+
+            if (Math.random() < 0.18) continue;
+
+            boxes.push({
+                x: col * GRID,
+                y: rowY(row),
+                w: BOX_SIZE,
+                h: BOX_SIZE,
+
+                row,
+                col,
+
+                falling: false,
+                unpacked: true,
+                unpackTimer: 0,
+
+                broken: false
+            });
+        }
+    }
+}
+
+function getOpenCell() {
+
+    const cols = Math.max(1, Math.floor(W / GRID));
+
+    let possible = [];
+
+    for (let row = 0; row < MAX_ROWS; row++) {
+
+        for (let col = 0; col < cols; col++) {
+
+            const occupied = boxes.some(
+                b => !b.broken &&
+                b.row === row &&
+                b.col === col
+            );
+
+            if (!occupied) {
+                possible.push({row, col});
+            }
+        }
+    }
+
+    if (possible.length === 0) return null;
+
+    return possible[Math.floor(Math.random() * possible.length)];
+}
+
+function spawnBox() {
+
+    const cell = getOpenCell();
+
+    if (!cell) return;
+
+    const box = {
+        x: cell.col * GRID,
+        y: -GRID - 50,
+
+        w: BOX_SIZE,
+        h: BOX_SIZE,
+
+        row: cell.row,
+        col: cell.col,
+
+        falling: true,
+
+        unpacked: false,
+        unpackTimer: UNPACK_TIME,
+
+        broken: false
+    };
+
+    boxes.push(box);
+
+    document.getElementById("warning").classList.remove("hidden");
+
+    setTimeout(() => {
+        document.getElementById("warning").classList.add("hidden");
+    }, 800);
+}
+
+function updateBoxes(dt) {
+
+    for (const box of boxes) {
+
+        if (box.broken) continue;
+
+        const targetY = rowY(box.row);
+
+        if (box.falling) {
+
+            const speed = 800;
+
+            box.y += speed * dt;
+
+            if (box.y >= targetY) {
+
+                box.y = targetY;
+                box.falling = false;
+            }
+
+        } else if (!box.unpacked) {
+
+            box.unpackTimer -= dt;
+
+            if (box.unpackTimer <= 0) {
+                box.unpackTimer = 0;
+                box.unpacked = true;
+            }
+        }
+    }
+
+    boxes = boxes.filter(b => !b.broken);
+}
+
+/* =========================
+   PLAYER MOVEMENT
+========================= */
+
+function jump() {
+
+    if (!gameRunning || paused) return;
+
+    if (player.grounded) {
+
+        player.vy = player.bouncePower
+            ? -JUMP_POWER * 1.25
+            : -JUMP_POWER;
+
+        player.grounded = false;
+    }
+}
+
+function updatePlayer(dt) {
+
+    let movingLeft =
+        keys["ArrowLeft"] ||
+        keys["a"] ||
+        touchLeft;
+
+    let movingRight =
+        keys["ArrowRight"] ||
+        keys["d"] ||
+        touchRight;
+
+    player.vx = 0;
+
+    if (movingLeft) {
+        player.vx = -MOVE_SPEED;
+        player.facing = -1;
+    }
+
+    if (movingRight) {
+        player.vx = MOVE_SPEED;
+        player.facing = 1;
+    }
+
+    player.x += player.vx * dt;
+
+    if (player.x < 0) {
+        player.x = 0;
+    }
+
+    if (player.x + player.w > W) {
+        player.x = W - player.w;
+    }
+
+    player.vy += GRAVITY * dt;
+    player.y += player.vy * dt;
+
+    player.grounded = false;
+
+    /*
+       IMPORTANT:
+
+       Boxes ARE platforms from above.
+
+       If the player's feet cross the top of a box while falling,
+       they land on it.
+
+       If the player hits the SIDE of a box, they are pushed sideways.
+
+       This means you can jump onto boxes, but you cannot walk through
+       them like they're empty space.
+    */
+
+    for (const box of boxes) {
+
+        if (box.broken || box.falling) continue;
+
+        if (!rectsOverlap(player, box)) continue;
+
+        const previousBottom = player.y - player.vy * dt + player.h;
+        const previousTop = player.y - player.vy * dt;
+
+        const boxTop = box.y;
+        const boxBottom = box.y + box.h;
+
+        /*
+           LANDING ON TOP
+        */
+
+        if (
+            player.vy >= 0 &&
+            previousBottom <= boxTop + 10 &&
+            player.y + player.h >= boxTop
+        ) {
+
+            player.y = boxTop - player.h;
+            player.vy = 0;
+            player.grounded = true;
+
+            continue;
+        }
+
+        /*
+           HITTING UNDERSIDE
+        */
+
+        if (
+            player.vy < 0 &&
+            previousTop >= boxBottom - 10 &&
+            player.y <= boxBottom
+        ) {
+
+            player.y = boxBottom;
+            player.vy = 50;
+
+            continue;
+        }
+
+        /*
+           SIDE COLLISION
+        */
+
+        if (player.vx > 0) {
+
+            player.x = box.x - player.w;
+
+        } else if (player.vx < 0) {
+
+            player.x = box.x + box.w;
+
+        } else {
+
+            const playerCenter = player.x + player.w / 2;
+            const boxCenter = box.x + box.w / 2;
+
+            if (playerCenter < boxCenter) {
+                player.x = box.x - player.w;
+            } else {
+                player.x = box.x + box.w;
+            }
+        }
+    }
+
+    /*
+       GROUND
+    */
+
+    if (player.y + player.h >= groundY) {
+
+        player.y = groundY - player.h;
+        player.vy = 0;
+        player.grounded = true;
+    }
+
+    /*
+       CEILING
+    */
+
+    const ceiling = 35;
+
+    if (player.y < ceiling) {
+
+        player.y = ceiling;
+
+        if (player.vy < 0) {
+            player.vy = 0;
+        }
+    }
+
+    /*
+       Tilt only while moving.
+    */
+
+    const targetAngle = player.vx / MOVE_SPEED * 0.12;
+
+    player.angle +=
+        (targetAngle - player.angle) * Math.min(1, dt * 10);
+}
+
+/* =========================
+   BREAKING
+========================= */
+
+function getBreakTarget() {
+
+    let bestBox = null;
+    let bestDistance = Infinity;
+
+    const reach = 85;
+
+    const playerCenterX = player.x + player.w / 2;
+    const playerCenterY = player.y + player.h / 2;
+
+    for (const box of boxes) {
+
+        if (box.broken || box.falling || !box.unpacked) continue;
+
+        const boxCenterX = box.x + box.w / 2;
+        const boxCenterY = box.y + box.h / 2;
+
+        const dx = boxCenterX - playerCenterX;
+        const dy = boxCenterY - playerCenterY;
+
+        /*
+           The box needs to be close AND generally in front
+           of the player.
+        */
+
+        const inFront =
+            player.facing === 1
+                ? dx > -20
+                : dx < 20;
+
+        if (!inFront) continue;
+
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < reach && distance < bestDistance) {
+
+            bestDistance = distance;
+            bestBox = box;
+        }
+    }
+
+    return bestBox;
+}
+
+function startBreaking() {
+
+    if (!gameRunning || paused) return;
+
+    if (breakTarget) return;
+
+    const target = getBreakTarget();
+
+    if (!target) return;
+
+    breakTarget = target;
+    breakProgress = 0;
+
+    document.getElementById("breakUI").classList.remove("hidden");
+}
+
+function stopBreaking() {
+
+    breakTarget = null;
+    breakProgress = 0;
+
+    document.getElementById("breakUI").classList.add("hidden");
+    document.getElementById("breakFill").style.width = "0%";
+}
+
+function updateBreaking(dt) {
+
+    if (!keys["e"] && !breakingPointer) {
+
+        if (breakTarget) {
+            stopBreaking();
+        }
+
+        return;
+    }
+
+    if (!breakTarget) {
+
+        const target = getBreakTarget();
+
+        if (!target) return;
+
+        breakTarget = target;
+
+        document.getElementById("breakUI").classList.remove("hidden");
+    }
+
+    /*
+       FULL FIVE SECOND HOLD.
+       Let go at 4.99 seconds = cancelled.
+    */
+
+    breakProgress += dt;
+
+    const percentage =
+        Math.min(100, (breakProgress / BREAK_TIME) * 100);
+
+    document.getElementById("breakFill").style.width =
+        percentage + "%";
+
+    if (breakProgress >= BREAK_TIME) {
+
+        breakBox(breakTarget);
+
+        stopBreaking();
+    }
+}
+
+function breakBox(box) {
+
+    if (!box || box.broken) return;
+
+    box.broken = true;
+
+    score += 10;
+
+    createParticles(
+        box.x + box.w / 2,
+        box.y + box.h / 2,
+        18
+    );
+
+    giveRandomItem();
+}
+
+/* =========================
+   ITEMS
+========================= */
+
+function giveRandomItem() {
+
+    const possible = [
+        "rocket",
+        "bomb",
+        "board",
+        "shield",
+        "bounce"
+    ];
+
+    currentItem =
+        possible[Math.floor(Math.random() * possible.length)];
+
+    updateUI();
+}
+
+function useItem() {
+
+    if (!currentItem || !gameRunning) return;
+
+    if (currentItem === "rocket") {
+
+        useRocket();
+
+    } else if (currentItem === "bomb") {
+
+        useBomb();
+
+    } else if (currentItem === "board") {
+
+        useBoard();
+
+    } else if (currentItem === "shield") {
+
+        player.shield = true;
+
+        setTimeout(() => {
+            player.shield = false;
+        }, 6000);
+
+    } else if (currentItem === "bounce") {
+
+        player.bouncePower = true;
+
+        setTimeout(() => {
+            player.bouncePower = false;
+        }, 8000);
+    }
+
+    currentItem = null;
+    updateUI();
+}
+
+function useRocket() {
+
+    let closest = null;
+    let distance = Infinity;
+
+    for (const box of boxes) {
+
+        if (box.broken || box.falling) continue;
+
+        const dx =
+            (box.x + box.w / 2) -
+            (player.x + player.w / 2);
+
+        const dy =
+            (box.y + box.h / 2) -
+            (player.y + player.h / 2);
+
+        if (player.facing === 1 && dx <= 0) continue;
+        if (player.facing === -1 && dx >= 0) continue;
+
+        const d = Math.sqrt(dx * dx + dy * dy);
+
+        if (d < distance) {
+
+            distance = d;
+            closest = box;
+        }
+    }
+
+    if (closest && distance < 500) {
+
+        breakBox(closest);
+
+        createParticles(
+            closest.x + closest.w / 2,
+            closest.y + closest.h / 2,
+            30
+        );
+    }
+}
+
+function useBomb() {
+
+    const cx = player.x + player.w / 2;
+    const cy = player.y + player.h / 2;
+
+    for (const box of boxes) {
+
+        const bx = box.x + box.w / 2;
+        const by = box.y + box.h / 2;
+
+        const d = Math.hypot(bx - cx, by - cy);
+
+        if (d < 180) {
+            box.broken = true;
+        }
+    }
+
+    createParticles(cx, cy, 50);
+}
+
+function useBoard() {
+
+    const x =
+        Math.floor(
+            (player.x + player.w / 2) / GRID
+        ) * GRID;
+
+    const y =
+        player.y - 15;
+
+    items.push({
+        type: "board",
+        x,
+        y,
+        w: 130,
+        h: 15,
+        life: 10000
+    });
+}
+
+/* =========================
+   CARS
+========================= */
+
+function spawnCar() {
+
+    const fromLeft = Math.random() < 0.5;
+
+    cars.push({
+        x: fromLeft ? -240 : W + 240,
+
+        y: groundY - 60,
+
+        w: 220,
+        h: 60,
+
+        vx: fromLeft ? 700 : -700
+    });
+}
+
+function updateCars(dt) {
+
+    for (const car of cars) {
+
+        car.x += car.vx * dt;
+
+        if (
+            rectsOverlap(player, car) &&
+            !player.shield
+        ) {
+
+            gameOver();
+            return;
+        }
+    }
+
+    cars = cars.filter(
+        car => car.x > -400 && car.x < W + 400
+    );
+}
+
+/* =========================
+   BOARD ITEMS
+========================= */
+
+function updateBoards(dt) {
+
+    for (const item of items) {
+
+        item.life -= dt * 1000;
+    }
+
+    items = items.filter(item => item.life > 0);
+}
+
+/* =========================
+   PARTICLES
+========================= */
+
+function createParticles(x, y, amount) {
+
+    for (let i = 0; i < amount; i++) {
+
+        particles.push({
+            x,
+            y,
+
+            vx: (Math.random() - .5) * 500,
+            vy: (Math.random() - .5) * 500,
+
+            life: .5 + Math.random() * .7,
+
+            size: 4 + Math.random() * 8
+        });
+    }
+}
+
+function updateParticles(dt) {
+
+    for (const p of particles) {
+
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+
+        p.vy += 700 * dt;
+
+        p.life -= dt;
+    }
+
+    particles = particles.filter(p => p.life > 0);
+}
+
+/* =========================
+   SCORE
+========================= */
+
+function updateScore(dt) {
+
+    score += dt;
+}
+
+/* =========================
+   GAME OVER
+========================= */
+
+function gameOver() {
+
+    if (!gameRunning) return;
+
+    gameRunning = false;
+
+    const final = Math.floor(score);
+
+    if (final > best) {
+
+        best = final;
+
+        localStorage.setItem(
+            "boxBounceBest",
+            best
+        );
+    }
+
+    document.getElementById("finalScore").textContent =
+        final;
+
+    document.getElementById("finalBest").textContent =
+        best;
+
+    document.getElementById("gameOver").classList.remove("hidden");
+
+    hud.classList.add("hidden");
+    itemBar.classList.add("hidden");
+    controls.classList.add("hidden");
+
+    document.getElementById("breakUI").classList.add("hidden");
+}
+
+/* =========================
+   COLLISION
+========================= */
+
+function rectsOverlap(a, b) {
+
+    return (
+        a.x < b.x + b.w &&
+        a.x + a.w > b.x &&
+        a.y < b.y + b.h &&
+        a.y + a.h > b.y
+    );
+}
+
+/* =========================
+   DRAW
+========================= */
+
+function drawBackground() {
+
+    ctx.clearRect(0, 0, W, H);
+
+    /*
+       Sky
+    */
+
+    ctx.fillStyle = "#8fd3ff";
+    ctx.fillRect(0, 0, W, groundY);
+
+    /*
+       Clouds
+    */
+
+    ctx.fillStyle = "rgba(255,255,255,.65)";
+
+    for (let i = 0; i < 7; i++) {
+
+        const x =
+            (i * 230 + 70) % (W + 200);
+
+        const y =
+            70 + (i % 3) * 80;
+
+        ctx.beginPath();
+        ctx.arc(x, y, 28, 0, Math.PI * 2);
+        ctx.arc(x + 35, y - 12, 36, 0, Math.PI * 2);
+        ctx.arc(x + 72, y, 28, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    /*
+       Ground
+    */
+
+    ctx.fillStyle = "#55a83d";
+    ctx.fillRect(0, groundY, W, 15);
+
+    ctx.fillStyle = "#76502e";
+    ctx.fillRect(0, groundY + 15, W, H - groundY);
+
+    /*
+       Grid lines
+    */
+
+    ctx.strokeStyle = "rgba(255,255,255,.08)";
+    ctx.lineWidth = 1;
+
+    for (let x = 0; x < W; x += GRID) {
+
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, groundY);
+        ctx.stroke();
+    }
+}
+
+function drawBoxes() {
+
+    for (const box of boxes) {
+
+        if (box.broken) continue;
+
+        /*
+           Box body
+        */
+
+        ctx.fillStyle = "#c8873c";
+        ctx.fillRect(
+            box.x + 2,
+            box.y + 2,
+            box.w - 4,
+            box.h - 4
+        );
+
+        ctx.strokeStyle = "#6e421c";
+        ctx.lineWidth = 4;
+        ctx.strokeRect(
+            box.x + 2,
+            box.y + 2,
+            box.w - 4,
+            box.h - 4
+        );
+
+        /*
+           Tape
+        */
+
+        ctx.fillStyle = "#e7b75a";
+
+        ctx.fillRect(
+            box.x + box.w / 2 - 6,
+            box.y,
+            12,
+            box.h
+        );
+
+        /*
+           Unpacking overlay
+        */
+
+        if (!box.unpacked) {
+
+            ctx.fillStyle = "rgba(0,0,0,.5)";
+            ctx.fillRect(
+                box.x,
+                box.y,
+                box.w,
+                box.h
+            );
+
+            ctx.fillStyle = "white";
+            ctx.font = "bold 13px Arial";
+            ctx.textAlign = "center";
+
+            ctx.fillText(
+                Math.ceil(box.unpackTimer) + "s",
+                box.x + box.w / 2,
+                box.y + box.h / 2 + 5
+            );
+        }
+
+        /*
+           Break target highlight
+        */
+
+        if (box === breakTarget) {
+
+            ctx.strokeStyle = "#ffcf4a";
+            ctx.lineWidth = 5;
+
+            ctx.strokeRect(
+                box.x + 4,
+                box.y + 4,
+                box.w - 8,
+                box.h - 8
+            );
+        }
+    }
+}
+
+function drawPlayer() {
+
+    ctx.save();
+
+    const cx = player.x + player.w / 2;
+    const cy = player.y + player.h / 2;
+
+    ctx.translate(cx, cy);
+    ctx.rotate(player.angle);
+
+    /*
+       Player is intentionally just a box template.
+    */
+
+    ctx.fillStyle = "#e8e8e8";
+
+    ctx.fillRect(
+        -player.w / 2,
+        -player.h / 2,
+        player.w,
+        player.h
+    );
+
+    ctx.strokeStyle = "#333";
+    ctx.lineWidth = 4;
+
+    ctx.strokeRect(
+        -player.w / 2,
+        -player.h / 2,
+        player.w,
+        player.h
+    );
+
+    /*
+       Mail bag
+    */
+
+    ctx.fillStyle = "#bf873b";
+
+    ctx.fillRect(
+        -player.w / 2 - 5,
+        -5,
+        10,
+        25
+    );
+
+    /*
+       Face direction marker
+    */
+
+    ctx.fillStyle = "#333";
+
+    ctx.fillRect(
+        player.facing * 8,
+        -12,
+        6,
+        6
+    );
+
+    /*
+       Shield
+    */
+
+    if (player.shield) {
+
+        ctx.strokeStyle = "#5ce1ff";
+        ctx.lineWidth = 5;
+
+        ctx.beginPath();
+        ctx.arc(
+            0,
+            0,
+            37,
+            0,
+            Math.PI * 2
+        );
+
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
+function drawCars() {
+
+    for (const car of cars) {
+
+        /*
+           Big rectangle car template.
+        */
+
+        ctx.fillStyle = "#333";
+
+        ctx.fillRect(
+            car.x,
+            car.y,
+            car.w,
+            car.h
+        );
+
+        ctx.strokeStyle = "#111";
+        ctx.lineWidth = 5;
+
+        ctx.strokeRect(
+            car.x,
+            car.y,
+            car.w,
+            car.h
+        );
+
+        /*
+           Windows
+        */
+
+        ctx.fillStyle = "#8fd3ff";
+
+        ctx.fillRect(
+            car.x + 35,
+            car.y + 10,
+            45,
+            25
+        );
+
+        ctx.fillRect(
+            car.x + car.w - 80,
+            car.y + 10,
+            45,
+            25
+        );
+
+        /*
+           Wheels
+        */
+
+        ctx.fillStyle = "#111";
+
+        ctx.beginPath();
+        ctx.arc(
+            car.x + 45,
+            car.y + car.h,
+            18,
+            0,
+            Math.PI * 2
+        );
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(
+            car.x + car.w - 45,
+            car.y + car.h,
+            18,
+            0,
+            Math.PI * 2
+        );
+        ctx.fill();
+    }
+}
+
+function drawBoards() {
+
+    for (const board of items) {
+
+        if (board.type !== "board") continue;
+
+        ctx.fillStyle = "#9c6530";
+
+        ctx.fillRect(
+            board.x,
+            board.y,
+            board.w,
+            board.h
+        );
+
+        ctx.strokeStyle = "#53351b";
+        ctx.lineWidth = 3;
+
+        ctx.strokeRect(
+            board.x,
+            board.y,
+            board.w,
+            board.h
+        );
+    }
+}
+
+function drawParticles() {
+
+    for (const p of particles) {
+
+        ctx.globalAlpha =
+            Math.max(0, p.life);
+
+        ctx.fillStyle = "#ffcf4a";
+
+        ctx.fillRect(
+            p.x,
+            p.y,
+            p.size,
+            p.size
+        );
+    }
+
+    ctx.globalAlpha = 1;
+}
+
+/* =========================
+   UI
+========================= */
+
+function updateUI() {
+
+    document.getElementById("score").textContent =
+        Math.floor(score);
+
+    document.getElementById("best").textContent =
+        best;
+
+    document.getElementById("boxCount").textContent =
+        boxes.length;
+
+    let name = "None";
+
+    if (currentItem === "rocket") name = "🚀 Rocket";
+    if (currentItem === "bomb") name = "💣 Bomb";
+    if (currentItem === "board") name = "🪵 Board";
+    if (currentItem === "shield") name = "🛡️ Shield";
+    if (currentItem === "bounce") name = "⬆️ Bounce";
+
+    document.getElementById("currentItem").textContent =
+        name;
+}
+
+/* =========================
+   INPUT
+========================= */
+
+window.addEventListener("keydown", e => {
+
+    keys[e.key] = true;
+
+    if (
+        e.key === " " ||
+        e.key === "ArrowUp" ||
+        e.key === "w"
+    ) {
+        e.preventDefault();
+        jump();
+    }
+
+    if (e.key.toLowerCase() === "e") {
+
+        e.preventDefault();
+
+        keys["e"] = true;
+
+        startBreaking();
+    }
+
+    if (e.key.toLowerCase() === "q") {
+        useItem();
+    }
+
+    if (e.key === "Escape") {
+        paused = !paused;
+    }
+});
+
+window.addEventListener("keyup", e => {
+
+    keys[e.key] = false;
+
+    if (e.key.toLowerCase() === "e") {
+        keys["e"] = false;
+    }
+});
+
+/* =========================
+   POINTER BREAKING
+========================= */
+
+let breakingPointer = false;
+
+canvas.addEventListener("pointerdown", e => {
+
+    if (!gameRunning) return;
+
+    breakingPointer = true;
+
+    startBreaking();
+});
+
+window.addEventListener("pointerup", () => {
+
+    breakingPointer = false;
+
+    if (!keys["e"]) {
+        stopBreaking();
+    }
+});
+
+/* =========================
+   MOBILE CONTROLS
+========================= */
+
+function holdButton(element, down, up) {
+
+    element.addEventListener("pointerdown", e => {
+
+        e.preventDefault();
+        down();
+    });
+
+    element.addEventListener("pointerup", e => {
+
+        e.preventDefault();
+        up();
+    });
+
+    element.addEventListener("pointercancel", up);
+    element.addEventListener("pointerleave", up);
+}
+
+holdButton(
+    document.getElementById("leftBtn"),
+
+    () => touchLeft = true,
+
+    () => touchLeft = false
+);
+
+holdButton(
+    document.getElementById("rightBtn"),
+
+    () => touchRight = true,
+
+    () => touchRight = false
+);
+
+holdButton(
+    document.getElementById("jumpBtn"),
+
+    () => jump(),
+
+    () => {}
+);
+
+holdButton(
+    document.getElementById("useBtn"),
+
+    () => {
+        keys["e"] = true;
+        startBreaking();
+    },
+
+    () => {
+        keys["e"] = false;
+
+        if (!breakingPointer) {
+            stopBreaking();
+        }
+    }
+);
+
+/* =========================
+   MAIN LOOP
+========================= */
+
+let lastTime = 0;
+
+function loop(timestamp) {
+
+    if (!gameRunning) return;
+
+    if (!lastTime) {
+        lastTime = timestamp;
+    }
+
+    let dt =
+        Math.min(
+            (timestamp - lastTime) / 1000,
+            0.033
+        );
+
+    lastTime = timestamp;
+
+    if (!paused) {
+
+        gameTime += dt;
+
+        spawnTimer -= dt;
+
+        if (spawnTimer <= 0) {
+
+            spawnBox();
+
+            /*
+               Boxes become slightly more frequent.
+            */
+
+            spawnTimer =
+                Math.max(
+                    1.4,
+                    3.5 - gameTime * 0.015
+                );
+        }
+
+        carTimer -= dt;
+
+        if (carTimer <= 0) {
+
+            spawnCar();
+
+            carTimer =
+                6 + Math.random() * 5;
+        }
+
+        updateBoxes(dt);
+        updatePlayer(dt);
+        updateCars(dt);
+        updateBoards(dt);
+        updateParticles(dt);
+        updateBreaking(dt);
+
+        updateScore(dt);
+
+        updateUI();
+    }
+
+    drawBackground();
+    drawBoards();
+    drawBoxes();
+    drawCars();
+    drawPlayer();
+    drawParticles();
+
+    requestAnimationFrame(loop);
+}
+
+/* =========================
+   INITIAL SCREEN
+========================= */
+
+document.getElementById("best").textContent = best;
+</script>
+
+</body>
+</html>
